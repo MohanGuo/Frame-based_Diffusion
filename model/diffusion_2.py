@@ -174,7 +174,7 @@ class PredefinedNoiseSchedule(torch.nn.Module):
         else:
             raise ValueError(noise_schedule)
 
-        print('alphas2', alphas2)
+        # print('alphas2', alphas2)
 
         sigmas2 = 1 - alphas2
 
@@ -183,7 +183,7 @@ class PredefinedNoiseSchedule(torch.nn.Module):
 
         log_alphas2_to_sigmas2 = log_alphas2 - log_sigmas2
 
-        print('gamma', -log_alphas2_to_sigmas2)
+        # print('gamma', -log_alphas2_to_sigmas2)
 
         self.gamma = torch.nn.Parameter(
             torch.from_numpy(-log_alphas2_to_sigmas2).float(),
@@ -605,6 +605,8 @@ class EnVariationalDiffusion_2(torch.nn.Module):
         # Sample z_t given x, h for timestep t, from q(z_t | x, h)
         z_t = alpha_t * xh + sigma_t * eps
 
+        # print(f"Shape of z_t: {z_t.shape}")
+        # print(f"Shape of xh: {xh.shape}")
 
         # coordinates are not centered anymore, since the rotation is different for every node.
         # diffusion_utils.assert_mean_zero_with_mask(z_t[:, :, :self.n_dims], node_mask)
@@ -662,6 +664,21 @@ class EnVariationalDiffusion_2(torch.nn.Module):
             assert kl_prior.size() == loss_term_0.size()
 
             loss = kl_prior + estimator_loss_terms + neg_log_constants + loss_term_0
+
+            # print("t0_always=True, All loss components:")
+            # print(f"kl_prior: {kl_prior}")
+            # print(f"estimator_loss_terms: {estimator_loss_terms}")
+            # print(f"neg_log_constants: {neg_log_constants}")
+            # print(f"loss_term_0: {loss_term_0}")
+            # print(f"total loss: {loss}")
+
+            # print("\nMean values:")
+            # print(f"kl_prior mean: {kl_prior.mean().item():.6f}")
+            # print(f"estimator_loss_terms mean: {estimator_loss_terms.mean().item():.6f}")
+            # print(f"neg_log_constants mean: {neg_log_constants.mean().item():.6f}")
+            # print(f"loss_term_0 mean: {loss_term_0.mean().item():.6f}")
+            # print(f"total loss mean: {loss.mean().item():.6f}")
+
 
         else:
             # Computes the L_0 term (even if gamma_t is not actually gamma_0)
@@ -732,11 +749,52 @@ class EnVariationalDiffusion_2(torch.nn.Module):
 
         # diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
 
+        ################## MG: pass egnn to get invariant coordinates
+        # xh = torch.cat([x, h['categorical'], h['integer']], dim=2)
+        # zt[..., :self.n_dims] =remove_mean_with_mask(zt[..., :self.n_dims], node_mask)
+        # diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
+        # # print(f"Translation invariant input!")
+        # # with torch.no_grad():
+        # output, _, egnn_f = self.egnn._forward(zt, node_mask, edge_mask, context=None)
+        # x_invariant = output[..., :self.n_dims]
+        # # x_invariant =remove_mean_with_mask(x_invariant, node_mask)
+        # net_input = torch.cat([x_invariant, zt[..., self.n_dims:]], dim=2)
+        # egnn_f: (nodes, n_dims, channels)
+        # diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
+        ##########################################################
+
         # Neural net prediction.
         eps_t = self.phi(zt, t, node_mask, edge_mask, context)
 
+        #######################MG: transform back to equivariance#################
+        # batch_size, num_nodes, _ = eps_t.shape
+        # # print("net_out shape:", net_out.shape)
+        # eps_t_x = eps_t.view(batch_size * num_nodes, -1)
+        # eps_t_x = eps_t_x[:, :self.n_dims]
+        # # print("eps_t_x shape:", eps_t_x.shape)
+        # # print("egnn_f shape:", egnn_f.shape)
+        # # print(f"eps_t_x: {eps_t_x}")
+        # # print(f"egnn_f: {egnn_f}")
+        # if torch.any(torch.isnan(eps_t_x)):
+        #     print('Warning: detected nan in eps_t_x')
+        # if torch.any(torch.isnan(egnn_f)):
+        #     print('Warning: detected nan in egnn_f')
+        # # MG: Loss on invariant or equivariant
+        # # eps_t_x = torch.bmm(eps_t_x.unsqueeze(1), egnn_f).squeeze(1)
+        # # print(f"eps_t_x 2: {eps_t_x}")
+        # eps_t_x = eps_t_x.view(batch_size, num_nodes, -1)
+        # # print(f"eps_t_x 3: {eps_t_x}")
+        # if torch.any(torch.isnan(eps_t_x)):
+        #     print('Warning: detected nan in eps_t_x 2')
+        # if torch.any(torch.isnan(node_mask)):
+        #     print('Warning: detected nan in node_mask')
+        # assert node_mask.sum() > 0, "All masked!"
+        # eps_t_x = diffusion_utils.remove_mean_with_mask(eps_t_x, node_mask)
+        # eps_t = torch.cat([eps_t_x, eps_t[:, :, self.n_dims:]], dim=2)
+        #########################################################################
+
         # Compute mu for p(zs | zt).
-        print(f"Shape of node_mask in diffusion: {node_mask.shape}")
+        # print(f"Shape of node_mask in diffusion: {node_mask.shape}")
         diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
         diffusion_utils.assert_mean_zero_with_mask(eps_t[:, :, :self.n_dims], node_mask)
         

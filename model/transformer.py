@@ -6,7 +6,7 @@ import math
 import copy
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, num_heads):
+    def __init__(self, d_model, num_heads, edge_dim):
         super(MultiHeadAttention, self).__init__()
         # d_model: embedding dimension of every token
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
@@ -22,9 +22,17 @@ class MultiHeadAttention(nn.Module):
         self.W_k = nn.Linear(d_model, d_model)
         self.W_v = nn.Linear(d_model, d_model)
         self.W_o = nn.Linear(d_model, d_model)
+
+        # For edge_features
+        self.W_e = nn.Linear(edge_dim, self.d_k)
         
-    def scaled_dot_product_attention(self, Q, K, V, mask=None):
+    def scaled_dot_product_attention(self, Q, K, V, edge_features, mask=None):
         attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+
+        edge_scores = self.W_e(edge_features).unsqueeze(1)  # (batch_size, num_heads, num_nodes, num_nodes, d_k)
+        edge_scores = torch.sum(edge_scores * Q.unsqueeze(-2), dim=-1)  # (batch_size, num_heads, num_nodes, num_nodes)
+
+        attn_scores = attn_scores + edge_scores
 
         # For masked attention
         if mask is not None:
@@ -52,7 +60,7 @@ class MultiHeadAttention(nn.Module):
         batch_size, _, num_nodes, d_k = x.size()
         return x.transpose(1, 2).contiguous().view(batch_size, num_nodes, self.d_model)
         
-    def forward(self, Q, K, V, mask=None):
+    def forward(self, Q, K, V, edge_features, mask=None):
         # print(f"Shape of input multi-head: {Q.shape}")
         # [bs, nodes, features]
         Q = self.split_heads(self.W_q(Q))
@@ -62,7 +70,7 @@ class MultiHeadAttention(nn.Module):
         # print(f"Mask: {mask}")
         # print(f"Q: {Q[0]}")
         
-        attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
+        attn_output = self.scaled_dot_product_attention(Q, K, V, edge_features, mask)
         output = self.W_o(self.combine_heads(attn_output))
         return output
     
@@ -77,17 +85,17 @@ class PositionWiseFeedForward(nn.Module):
         return self.fc2(self.relu(self.fc1(x)))
     
 class EncoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, dropout):
+    def __init__(self, d_model, num_heads, d_ff, dropout, edge_dim):
         super(EncoderLayer, self).__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads)
+        self.self_attn = MultiHeadAttention(d_model, num_heads, edge_dim)
         self.feed_forward = PositionWiseFeedForward(d_model, d_ff)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x, mask):
+    def forward(self, x, mask, edge_features):
         # 1. Self-Attention
-        attn_output = self.self_attn(x, x, x, mask)
+        attn_output = self.self_attn(x, x, x, edge_features, mask)
         # print(f"Shape of x: {x.shape}")
         #x: [bs, nodes, d_model]
         # print(f"attn_output: {attn_output}")
@@ -136,7 +144,7 @@ class DecoderLayer(nn.Module):
         return x
 
 class Transformer(nn.Module):
-    def __init__(self, args, in_node_nf, device, d_model, num_heads, num_layers, d_ff, dropout):
+    def __init__(self, args, in_node_nf, device, d_model, num_heads, num_layers, d_ff, dropout, edge_dim):
         super(Transformer, self).__init__()
         self.device = device
         self.d_model = d_model
@@ -150,13 +158,13 @@ class Transformer(nn.Module):
         self.x_embedding = nn.Linear(3, d_model)  # 3 = 3
 
         # Transformer encoder layers
-        self.encoder_layers = nn.ModuleList([EncoderLayer(d_model * 2, num_heads, d_ff, dropout) for _ in range(num_layers)])
+        self.encoder_layers = nn.ModuleList([EncoderLayer(d_model * 2, num_heads, d_ff, dropout, edge_dim) for _ in range(num_layers)])
 
         # Output heads for noise prediction
-        self.noise_h_head = nn.Linear(d_model * 2, in_node_nf)  # Noise for h (categorical + integer)
+        self.noise_h_head = nn.Linear(d_model, in_node_nf)  # Noise for h (categorical + integer)
         # self.noise_x_head = nn.Linear(d_model * 2, 3)  # Noise for x (3D coordinates)
         self.noise_x_head = nn.Sequential(
-        nn.Linear(d_model * 2, d_model),
+        nn.Linear(d_model, d_model),
         nn.SiLU(),
         nn.Linear(d_model, d_model // 2),
         nn.SiLU(),
@@ -195,7 +203,7 @@ class Transformer(nn.Module):
 
         return attention_mask
 
-    def forward(self, h, x, edges=None, node_mask=None, edge_mask=None, batch_size=0):
+    def forward(self, h, x, edge_features, node_mask=None, edge_mask=None, batch_size=0):
         # h: (bs * n_nodes, in_node_nf)
         # x: (bs * n_nodes, 3)  # 3D coordinates
         bs_n_nodes = x.size(0)
@@ -226,15 +234,15 @@ class Transformer(nn.Module):
         # print(f"xh_embedded: {xh_embedded}")
         
         for enc_layer in self.encoder_layers:
-            enc_output = enc_layer(enc_output, attn_mask)
+            enc_output = enc_layer(enc_output, attn_mask, edge_features)
 
         # print(f"enc_output: {enc_output}")
         # Reshape back to (bs * n_nodes, d_model * 2)
         enc_output = enc_output.view(bs_n_nodes, self.d_model * 2)
         # print(f"enc_output: {enc_output}")
         # Output heads for noise prediction
-        noise_h = self.noise_h_head(enc_output)  # Noise for h (categorical + integer)
-        noise_x = self.noise_x_head(enc_output)  # Noise for x (3D coordinates)
+        noise_x = self.noise_x_head(enc_output[..., :self.d_model])  # Noise for x (3D coordinates)
+        noise_h = self.noise_h_head(enc_output[..., self.d_model:])  # Noise for h (categorical + integer)
         # print(f"noise_x: {noise_x}")
         # print(f"Shape of noise_h: {noise_h.shape}")
         if node_mask is not None:
