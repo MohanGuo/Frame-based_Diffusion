@@ -18,20 +18,25 @@ class MultiHeadAttention(nn.Module):
         self.d_k = d_model // num_heads
         
         # Q, K, V, Output are linear layers
-        self.W_q = nn.Linear(d_model, d_model)
-        self.W_k = nn.Linear(d_model, d_model)
-        self.W_v = nn.Linear(d_model, d_model)
+        self.W_q = nn.Linear(d_model, d_model, bias=False)
+        self.W_k = nn.Linear(d_model, d_model, bias=False)
+        self.W_v = nn.Linear(d_model, d_model, bias=False)
         self.W_o = nn.Linear(d_model, d_model)
 
         # For edge_features
-        self.W_e = nn.Linear(edge_dim, self.d_k)
+        # self.W_e = nn.Linear(edge_dim, self.d_k)
+        self.W_e = nn.Sequential(
+            nn.Linear(edge_dim, self.d_k),
+            nn.ReLU(),
+            nn.Linear(self.d_k, 1)
+        )
         
     def scaled_dot_product_attention(self, Q, K, V, edge_features, mask=None):
         attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
 
         edge_scores = self.W_e(edge_features).unsqueeze(1)  # (batch_size, num_heads, num_nodes, num_nodes, d_k)
-        edge_scores = torch.sum(edge_scores * Q.unsqueeze(-2), dim=-1)  # (batch_size, num_heads, num_nodes, num_nodes)
-
+        # edge_scores = torch.sum(edge_scores * Q.unsqueeze(-2), dim=-1)  # (batch_size, num_heads, num_nodes, num_nodes)
+        edge_scores = self.W_e(edge_features).squeeze(-1).unsqueeze(1).expand(-1, self.num_heads, -1, -1)
         attn_scores = attn_scores + edge_scores
 
         # For masked attention
@@ -44,7 +49,7 @@ class MultiHeadAttention(nn.Module):
             # print(f"Shape of attn_scores: {attn_scores.shape}")
             # print(f"Mask 1: {mask[0,0,...]}")
             # print(f"Attention scores: {attn_scores}")
-            attn_scores = attn_scores.masked_fill(mask == 0, 0)
+            attn_scores = attn_scores.masked_fill(mask == 0, -1e15)
 
         # Softmax along the last dimension
         attn_probs = torch.softmax(attn_scores, dim=-1)
@@ -109,39 +114,6 @@ class EncoderLayer(nn.Module):
         # 4. Residual + Norm
         x = self.norm2(x + self.dropout(ff_output))
         return x
-    
-class DecoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, dropout):
-        super(DecoderLayer, self).__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads)
-        self.cross_attn = MultiHeadAttention(d_model, num_heads)
-        self.feed_forward = PositionWiseFeedForward(d_model, d_ff)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-        
-    def forward(self, x, enc_output, src_mask, tgt_mask):
-        # x is the output
-        # 1. Self-Attention
-        attn_output = self.self_attn(x, x, x, tgt_mask)
-        
-        # 2. Residual + Norm
-        x = self.norm1(x + self.dropout(attn_output))
-
-        # 3. Cross-Attention
-        # enc_output is the encoder output
-        attn_output = self.cross_attn(x, enc_output, enc_output, src_mask)
-
-        # 4. Residual + Norm
-        x = self.norm2(x + self.dropout(attn_output))
-
-        # 5. Feed Forward
-        ff_output = self.feed_forward(x)
-
-        # 6. Residual + Norm
-        x = self.norm3(x + self.dropout(ff_output))
-        return x
 
 class Transformer(nn.Module):
     def __init__(self, args, in_node_nf, device, d_model, num_heads, num_layers, d_ff, dropout, edge_dim):
@@ -173,13 +145,6 @@ class Transformer(nn.Module):
 
         self.to(device)
 
-        # self.batch_size = args.batch_size
-
-    # def generate_mask(self, h, x):
-    #     # Generate masks if needed (e.g., for padding)
-    #     # Here we assume no padding, so masks are not used
-    #     src_mask = None
-    #     return src_mask
     def generate_mask(self, h, x, node_mask=None, batch_size=0):
         """
         Input:
@@ -250,13 +215,6 @@ class Transformer(nn.Module):
             noise_h = noise_h * node_mask
             noise_x = noise_x * node_mask
 
-        # Combine outputs into a dictionary
-        # noise_outputs = {
-        #     'noise_h': noise_h,
-        #     'noise_x': noise_x
-        # }
-
-        # return noise_outputs
         return noise_h, noise_x
     
 import torch

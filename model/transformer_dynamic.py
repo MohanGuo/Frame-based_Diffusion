@@ -3,17 +3,73 @@ import torch.nn as nn
 import math
 import numpy as np
 from .transformer import Transformer
+from .mpnn import LEquiMPNNQM9
 import sys
 sys.path.append('..')
 from equivariant_diffusion.utils import remove_mean, remove_mean_with_mask, assert_mean_zero_with_mask
 from egnn.models import EGNN_dynamics_QM9_MC
 from egnn.egnn_mc import EGNN as EGNN_mc
 import time
+from torch_geometric.nn import global_mean_pool, global_add_pool
+EPS = 1e-8
+class equivariant_layer(nn.Module):
+    def __init__(self, hidden_features):
+        super(equivariant_layer, self).__init__()
+        self.hidden_features = hidden_features
+        self.message_net1 = nn.Sequential(
+            nn.Linear(2 * hidden_features + 1, hidden_features),
+            nn.ReLU(),
+            nn.Linear(hidden_features, 1),
+        )
+        self.message_net2 = nn.Sequential(
+            nn.Linear(2 * hidden_features + 1, hidden_features),
+            nn.ReLU(),
+            nn.Linear(hidden_features, 1),
+        )
+        self.p = 5
+
+    def _initialize_weights(self):
+        for m in self.message_net1:
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                nn.init.constant_(m.bias, 0)
+
+        for m in self.message_net2:
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x, pos, edge_index, batch):
+        dist = (pos[edge_index[0]] - pos[edge_index[1]]).norm(dim=-1, keepdim=True)
+        vec1, vec2 = self.message(x[edge_index[0]], x[edge_index[1]], dist, pos[edge_index[0]], pos[edge_index[1]])
+        vec1_out, vec2_out = global_add_pool(vec1, edge_index[0]), global_add_pool(vec2, edge_index[0])
+        return self.gram_schmidt_batch(vec1_out, vec2_out)
+
+    def gram_schmidt_batch(self, v1, v2):
+        n1 = v1 / (torch.norm(v1, dim=-1, keepdim=True) + EPS)
+        n2_prime = v2 - (n1 * v2).sum(dim=-1, keepdim=True) * n1
+        n2 = n2_prime / (torch.norm(n2_prime, dim=-1, keepdim=True) + EPS)
+        n3 = torch.cross(n1, n2, dim=-1)
+        return torch.stack([n1, n2, n3], dim=-2)
+
+    def omega(self, dist):
+        out = 1 - (self.p + 1) * (self.p + 2) / 2 * (dist / 4.5) ** self.p + self.p * (self.p + 2) * (dist / 4.5) ** (self.p + 1) - self.p * (self.p + 1) / 2 * (dist / 4.5) ** (self.p + 2)
+        return out
+
+    def message(self, x_i, x_j, dist, pos_i, pos_j):
+        x_ij = torch.cat([x_i, x_j, dist], dim=-1)
+        mes_1 = self.message_net1(x_ij)
+        mes_2 = self.message_net2(x_ij)
+        coe = self.omega(dist)
+        norm_vec = (pos_i - pos_j) / (torch.norm(pos_i - pos_j, dim=-1, keepdim=True) + EPS)
+        return norm_vec * coe * mes_1, norm_vec * coe * mes_2
 
 class TransformerDynamics_2(nn.Module):
     def __init__(self, args,in_node_nf, context_node_nf, n_dims, 
                  hidden_nf=64, device='cpu', n_heads=4, 
                  n_layers=4, condition_time=True):
+                #  norm_constant=0,
+                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'):
 
         super().__init__()
         self.in_node_nf = in_node_nf
@@ -29,6 +85,13 @@ class TransformerDynamics_2(nn.Module):
                 num_vectors=7, num_vectors_out=2
                  )
         
+        # self.egnn = equivariant_layer(hidden_features = hidden_nf)
+        self.feature_embedding = nn.Sequential(
+            nn.Linear(in_node_nf - 1, hidden_nf),
+            nn.SiLU(),
+            nn.Linear(hidden_nf, hidden_nf)
+        )
+        
 
         self.transformer = Transformer(
             args=args,
@@ -42,6 +105,16 @@ class TransformerDynamics_2(nn.Module):
             edge_dim = 4
         )
 
+        self.equi_model = LEquiMPNNQM9(
+                in_node_nf=in_node_nf + context_node_nf,
+                in_edge_nf=1,
+                hidden_nf=hidden_nf,
+                device=device,
+                # act_fn=act_fn,
+                n_layers=n_layers)
+                # attention=attention,
+                # tanh=tanh)
+
     def forward(self, t, xh, node_mask, edge_mask, context=None):
         raise NotImplementedError
 
@@ -54,7 +127,7 @@ class TransformerDynamics_2(nn.Module):
         return self._forward
 
     def _forward(self, t, xh, node_mask, edge_mask, context):
-        start_1 = time.time()
+        # start_1 = time.time()
         bs, n_nodes, dims = xh.shape
         h_dims = dims - self.n_dims
         edges = self.get_adj_matrix(n_nodes, bs, self.device)
@@ -81,25 +154,37 @@ class TransformerDynamics_2(nn.Module):
         
 
         ################## MG: pass egnn to get invariant coordinates ###################
-        # xh = torch.cat([x, h['categorical'], h['integer']], dim=2)
-        # x_input =remove_mean_with_mask(xh[..., :self.n_dims], node_mask)
-        # xh_input = torch.cat([x_input, xh[..., self.n_dims:]], dim=2)
+        # # with torch.no_grad():
+        # # print(f"Shape of h_egnn: {h_egnn.shape}")
+        # # h_egnn:[864, 5]
+        # h_hidden = self.feature_embedding(h_egnn)
+        # batch_idx = torch.arange(bs, device=self.device).repeat_interleave(n_nodes)
+        # pose = self.egnn(h_hidden, x, edges, batch_idx)
+        # pose = (pose) * node_mask.unsqueeze(-1)
+        # x_invariant = torch.bmm(x.unsqueeze(1), pose.permute(0, 2, 1)).squeeze(1)
+        # x_invariant = x_invariant * node_mask.expand(-1, 3)
+        # x_invariant = x_invariant.view(bs, n_nodes, -1)
+        # if node_mask is None:
+        #     x_invariant = remove_mean(x_invariant)
+        # else:
+        #     # vel = remove_mean_with_mask(vel, node_mask.view(bs, n_nodes, 1))
+        #     x_invariant = remove_mean_with_mask(x_invariant, node_mask.view(bs, n_nodes, 1))
 
-        # with torch.no_grad():
-        output, vel_inverse, egnn_f = self.egnn._forward(h_egnn, x_input, edges, node_mask, edge_mask, context=None, bs=bs, n_nodes=n_nodes, dims=dims)
-        start_2 = time.time()
-        print(f'EGNN took {start_2 - start_1:.2f} seconds')
-        # print(f"output in TransformerDynamics_2: {output[..., :self.n_dims]}")
+        
+
+        # start_2 = time.time()
+        # print(f'EGNN took {start_2 - start_1:.2f} seconds')
+        # # print(f"output in TransformerDynamics_2: {output[..., :self.n_dims]}")
+        # # x_invariant = output[..., :self.n_dims]
+        # x_invariant = x_invariant.view(bs*n_nodes, -1)
+        # # print(f"x_invariant in TransformerDynamics_2: {x_invariant}")
+        # # egnn_f: (nodes, n_dims, channels)
+
+        output, vel_inverse, pose = self.egnn._forward(h_egnn, x_input, edges, node_mask, edge_mask, context=None, bs=bs, n_nodes=n_nodes, dims=dims)
+        # start_2 = time.time()
+        # print(f'EGNN took {start_2 - start_1:.2f} seconds')
         x_invariant = output[..., :self.n_dims]
-        # print(f"Shape of x_invariant: {x_invariant.shape}")
-        # node_mask = node_mask.view(bs*n_nodes, 1)
-        # edge_mask = edge_mask.view(bs*n_nodes*n_nodes, 1)
         x_invariant = x_invariant.view(bs*n_nodes, -1)
-        # print(f"x_invariant in TransformerDynamics_2: {x_invariant}")
-        # x_invariant = x_invariant.view(bs*n_nodes, -1) * node_mask
-        # x_invariant =remove_mean_with_mask(x_invariant, node_mask)
-        # z_t_transformed = torch.cat([x_invariant, h], dim=1)
-        # egnn_f: (nodes, n_dims, channels)
         #################################################################################
 
         if self.condition_time:
@@ -117,13 +202,6 @@ class TransformerDynamics_2(nn.Module):
             h = torch.cat([h, context], dim=1)
 
         # rows, cols = edges
-        # edge_features = []
-        # for i, j in zip(rows, cols):
-        #     edge_feat = torch.cat([h[i], h[j]], dim=0)
-        #     edge_features.append(edge_feat)
-        # edge_features = torch.stack(edge_features).view(bs, n_nodes, n_nodes, -1)
-
-        # rows, cols = edges
         # 直接使用索引提取特征
         # h_i = h[rows]
         # h_j = h[cols]
@@ -132,17 +210,24 @@ class TransformerDynamics_2(nn.Module):
         # # 调整形状
         # edge_features = edge_features.view(bs, n_nodes, n_nodes, -1)
 
-        radial, coord_diff = coord2diff(x_invariant, edges)
-        edge_features = torch.cat([radial, coord_diff], dim=1)
-        edge_features = edge_features.view(bs, n_nodes, n_nodes, -1)
+        radial, coord_diff = coord2diff(x, edges)
+        coord_diff = coord_diff.view(bs, n_nodes, n_nodes, 3)
+        radial = radial.view(bs, n_nodes, n_nodes, 1)
+        pose_edge = pose.view(bs, n_nodes, 3, 3)
+        coord_diff_reshaped = coord_diff.unsqueeze(-2)
+        transformed_coord = torch.einsum('bijpk,bikm->bijpm', coord_diff_reshaped, pose_edge.permute(0, 1, 3, 2)).squeeze(-2)
+        edge_features = torch.cat([radial, transformed_coord], dim=-1)
+        
 
-        start_3 = time.time()
-        print(f'edge features took {start_3 - start_2:.2f} seconds')
+        # start_3 = time.time()
+        # print(f'edge features took {start_3 - start_2:.2f} seconds')
 
         h_final, x_final = self.transformer(h, x_invariant, edge_features, node_mask=node_mask, batch_size=bs)
+        # batch_idx = torch.arange(bs, device=self.device).repeat_interleave(n_nodes)
+        # h_final, x_final = self.equi_model(h, x_invariant, edges, batch_idx)
 
-        start_4 = time.time()
-        print(f'Transformer took {start_4 - start_3:.2f} seconds')
+        # start_4 = time.time()
+        # print(f'Transformer took {start_4 - start_3:.2f} seconds')
         # h_final, x_final = self.transformer(h, x_invariant, node_mask=node_mask, batch_size=bs)
         # h_final, x_final = h, x_invariant
         # vel = (x_final) * node_mask
@@ -153,12 +238,11 @@ class TransformerDynamics_2(nn.Module):
         ################# if transform back #####################
         # # # print(f"Shape of x_final: {x_final.shape}")
         # #x_final: [bs*nodes, 3]
-        # # x_final = x_final - x_invariant
-        x_final_equivariant = torch.bmm(x_final.unsqueeze(1), egnn_f).squeeze(1)
+        x_final_equivariant = torch.bmm(x_final.unsqueeze(1), pose).squeeze(1)
         # x_final_equivariant = torch.bmm(x_final.unsqueeze(1), vel_inverse.permute(0, 2, 1)).squeeze(1)
         # # x_final_equivariant = torch.bmm(egnn_f.permute(0,2,1), x_final.unsqueeze(-1)).squeeze(-1)
         # # x_final_equivariant = torch.bmm(egnn_f, x_final.unsqueeze(2)).squeeze(2)
-        vel = (x_final_equivariant - x) * node_mask
+        vel = (x_final_equivariant) * node_mask
         # # # print(f"h_final: {h_final}")
         # # print(f"x_final_equivariant: {x_final_equivariant}")
         # # vel = (x_final) * node_mask
@@ -192,8 +276,8 @@ class TransformerDynamics_2(nn.Module):
         # print(f"Shape of node_mask: {node_mask}")
         assert_mean_zero_with_mask(vel, node_mask.view(bs, n_nodes, 1))
 
-        start_5 = time.time()
-        print(f'One forward took {start_5 - start_1:.2f} seconds')
+        # start_5 = time.time()
+        # print(f'One forward took {start_5 - start_1:.2f} seconds')
 
         if h_dims == 0:
             return vel
