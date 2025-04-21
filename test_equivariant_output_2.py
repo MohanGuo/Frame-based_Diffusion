@@ -1,0 +1,330 @@
+import torch
+# from egnn.models_new import EGNN_dynamics_QM9
+from model.transformer_dynamic import TransformerDynamics_2
+# from model.transformer_dynamic_baseline_transformer import TransformerDynamics_2
+# from model.transformer_dynamic_dit import TransformerDynamics_2
+from egnn.models import EGNN_dynamics_QM9_MC
+from equivariant_diffusion.utils import assert_mean_zero_with_mask, remove_mean_with_mask,\
+    assert_correctly_masked, sample_center_gravity_zero_gaussian_with_mask
+import sys
+sys.path.append('..')
+from qm9 import dataset
+from types import SimpleNamespace
+from configs.datasets_config import get_dataset_info
+# torch.set_default_dtype(torch.float64)
+# dtype = torch.float64
+torch.random.manual_seed(1)
+dtype = torch.float
+def random_rotation_matrix():
+    """Generate random 3D rotation matrix"""
+    theta = torch.randn(3)
+    theta = theta / torch.norm(theta)
+    K = torch.tensor([[0, -theta[2], theta[1]],
+                     [theta[2], 0, -theta[0]],
+                     [-theta[1], theta[0], 0]])
+    R = torch.matrix_exp(K)
+    return R
+
+def test_equivariance_with_seed(seed):
+    """运行单次等变性测试并返回指定的误差指标"""
+    # 设置随机种子
+    torch.random.manual_seed(seed)
+
+    # Model setup
+    device = 'cpu'
+    # dtype = torch.float
+    cfg = SimpleNamespace(
+        dataset='qm9',
+        batch_size=32,
+        num_workers=4,
+        filter_n_atoms=None,
+        datadir='qm9/temp',
+        remove_h=False,
+        include_charges=False,
+        device=device,
+        sequential=False,
+        context_node_nf=0,
+        nf=128
+    )
+    dataloaders, _ = dataset.retrieve_dataloaders(cfg)
+    loader = dataloaders['train']
+    dataset_info = get_dataset_info('qm9', False)
+
+    dynamics_in_node_nf = len(dataset_info['atom_decoder']) + int(False)
+    context_node_nf = 0
+    nf = 128
+    n_layers = 8
+
+    debug = False
+    egnn = EGNN_dynamics_QM9_MC(in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
+                 n_dims=3, device=device, hidden_nf=nf,
+                 act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
+                #  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
+                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'，
+                num_vectors=7, num_vectors_out=2
+                 )
+    
+    if debug:
+        egnn = TransformerDynamics_2(
+            args=cfg,
+            egnn=egnn,
+            in_node_nf=dynamics_in_node_nf + 1, context_node_nf=context_node_nf,
+            n_dims=3, device=device, hidden_nf=nf,
+            n_heads=8,
+            n_layers=n_layers,
+            condition_time=True,
+            debug=debug
+            )
+    else:
+        egnn = TransformerDynamics_2(
+            args=cfg,
+            egnn=egnn,
+            in_node_nf=dynamics_in_node_nf + 1, context_node_nf=context_node_nf,
+            n_dims=3, device=device, hidden_nf=nf,
+            n_heads=8,
+            n_layers=n_layers,
+            condition_time=True
+            )
+    # egnn = EGNN_dynamics_QM9_MC(
+    #     in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
+    #     n_dims=3, device=device, hidden_nf=nf,
+    #     act_fn=torch.nn.SiLU(), n_layers=n_layers,
+    #     attention=True, 
+    #     num_vectors=7, num_vectors_out=3
+    #     )
+    results = {
+        'rotation_invariance_error': 0.0,
+        'rotation_invariance_error_h': 0.0,
+        'rotation_equivariance_error': 0.0
+    }
+
+    egnn.eval()
+    with torch.no_grad():
+        for data in loader:
+            x = data['positions'].to(device, dtype)
+            node_mask = data['atom_mask'].to(device, dtype).unsqueeze(2)
+            print(f"Shape of node mask: {node_mask.shape}")
+            edge_mask = data['edge_mask'].to(device, dtype)
+            one_hot = data['one_hot'].to(device, dtype)
+            charges = data['charges'].to(device, dtype)
+
+            # x = remove_mean_with_mask(x, node_mask)
+            # check_mask_correct([x, one_hot, charges], node_mask)
+            # assert_mean_zero_with_mask(x, node_mask)
+            
+            # Combine features
+            xh = torch.cat([x, one_hot, charges], dim=2)
+            print(f"Shape of xh: {xh.shape}")
+            # Shape of xh: torch.Size([32, 27, 8])
+            
+            # t = torch.tensor([0.5])
+            t = torch.randint(0, 1, size=(x.size(0), 1), device=x.device).float()
+            # t = torch.zeros((x.size(0), 1), device=x.device).float()
+            # Original output
+            out1 = egnn._forward(t, xh, node_mask, edge_mask, context=None)
+            
+            # Test rotation equivariance
+            R = random_rotation_matrix()
+            xh_rot = xh.clone()
+            xh_rot[..., :3] = torch.matmul(xh[..., :3], R.T)  # Only rotate positions
+            print(f"Shape of rotation matrix: {R.shape}")
+
+            out2 = egnn._forward(t, xh_rot, node_mask, edge_mask, context=None)
+            out2_unrot = out2.clone()
+            
+            
+            ############# Test input invariance ##################
+            weight = 1e6
+
+            # print(f"Position of original output: {out1[..., :3]}")
+            # print(f"Position of rotated output: {out2[..., :3]}")
+            
+
+            rot_error = torch.mean(((out1[..., :3] - out2[..., :3]) * weight) ** 2)
+            results['rotation_invariance_error'] = rot_error.item()
+            print(f"A Rotation invariance error: {rot_error.item():.8f}")
+
+            rot_error = torch.mean(((out1[..., 3:-1] - out2[..., 3:-1]) * weight) ** 2)
+            results['rotation_invariance_error_h'] = rot_error.item()
+            print(f"A Rotation invariance error on h: {rot_error.item():.8f}")
+
+            out1_rot = torch.matmul(out1[..., :3], R.T)
+            error_tensor = ((out1_rot - out2[..., :3]) * weight) ** 2
+            rot_error = torch.mean(error_tensor)
+            results['rotation_equivariance_error'] = rot_error.item()
+            print(f"A Rotation equivariance error: {rot_error.item():.8f}")
+
+            absolute_diff = out1[..., :3] - out2[..., :3]
+            norm_out1 = torch.norm(out1[..., :3], dim=2, keepdim=True).clamp(min=1e-8)
+            relative_error = torch.mean((torch.norm(absolute_diff, dim=2) / norm_out1.squeeze(-1) )**2)
+            results['rotation_invariance_error'] = relative_error.item()
+            
+            # 2. 非空间特征旋转不变性
+            if out1.shape[2] > 3:  # 确保有非空间特征
+                absolute_diff_h = out1[..., 3:-1] - out2[..., 3:-1]
+                norm_out1_h = torch.norm(out1[..., 3:-1], dim=2, keepdim=True).clamp(min=1e-8)
+                relative_error_h = torch.mean((torch.norm(absolute_diff_h, dim=2) / norm_out1_h.squeeze(-1) * 1)**2)
+                results['rotation_invariance_error_h'] = relative_error_h.item()
+            else:
+                results['rotation_invariance_error_h'] = 0.0
+            
+            # 3. 旋转等变性
+            out1_rot = torch.matmul(out1[..., :3], R.T)
+            absolute_diff_equiv = out1_rot - out2[..., :3]
+            norm_out1_rot = torch.norm(out1_rot, dim=2, keepdim=True).clamp(min=1e-8)
+            relative_error_equiv = torch.mean((torch.norm(absolute_diff_equiv, dim=2) / norm_out1_rot.squeeze(-1) * 1)**2)
+            results['rotation_equivariance_error'] = relative_error_equiv.item()
+
+            
+
+            # print(f"Position of rotated original output: {out1_rot}")
+
+            # # Find the maximum error
+            # max_error_value, max_indices = torch.max(error_tensor.view(-1), dim=0)
+            # # Convert flat index back to 3D indices
+            # batch_size, num_nodes, dims = error_tensor.shape
+            # max_batch_idx = max_indices.item() // (num_nodes * dims)
+            # remainder = max_indices.item() % (num_nodes * dims)
+            # max_node_idx = remainder // dims
+            # max_dim_idx = remainder % dims
+            
+            # # Print detailed information about the maximum error
+            # print("\n=== Maximum Rotation Equivariance Error Details ===")
+            # print(f"Maximum error value: {max_error_value.item():.8f}")
+            # print(f"Location: batch={max_batch_idx}, node={max_node_idx}, dimension={max_dim_idx}")
+            
+            # # Print the actual values at this location
+            # value1 = out1_rot[max_batch_idx, max_node_idx, max_dim_idx].item()
+            # value2 = out2[max_batch_idx, max_node_idx, max_dim_idx].item()
+            # print(f"Rotated output value: {value1:.8f}")
+            # print(f"Direct output value: {value2:.8f}")
+            # print(f"Absolute difference: {abs(value1 - value2):.8f}")
+
+            ############### Test translation equivariance #################
+            trans = torch.randn(3) * 10
+            trans = trans * node_mask
+            xh_trans = xh.clone()
+            print(f"t: {t.shape}")
+            xh_trans[..., :3] += trans  # Only translate positions
+
+            # xh_trans[..., :3] = remove_mean_with_mask(xh_trans[..., :3], node_mask)
+            # check_mask_correct([xh_trans[..., :3], one_hot, charges], node_mask)
+
+            out3 = egnn._forward(t, xh_trans, node_mask, edge_mask, context=None)
+            # print(f"Shape of x_final3: {x_final3.shape}")
+            # x_final3 = x_final3.permute(0, 2, 1)
+            # x_final1 = x_final1.permute(0, 2, 1)
+            trans_error = torch.mean((out1 - out3) ** 2)
+            # trans_error = torch.mean((x_final1 - (x_final3 - t)) ** 2)
+            # trans_error = torch.mean((x_final1[..., 0] - (x_final3[..., 0] - t)) ** 2)
+            print(f"Translation equivariance error: {trans_error.item():.8f}")
+            
+            # # Analyze output scale and properties
+            # print("\n=== Output Scale Analysis ===")
+            
+            # # Spatial components (first 3 dimensions)
+            # spatial_out = out1[..., :3]
+            # print(f"Spatial output shape: {spatial_out.shape}")
+            # print(f"Spatial output min: {spatial_out.min().item():.6f}")
+            # print(f"Spatial output max: {spatial_out.max().item():.6f}")
+            # print(f"Spatial output mean: {spatial_out.mean().item():.6f}")
+            # print(f"Spatial output std: {spatial_out.std().item():.6f}")
+            
+            # # Compute L2 norm of spatial components (velocity magnitude)
+            # spatial_norm = torch.norm(spatial_out, dim=2)
+            # print(f"Spatial L2 norm min: {spatial_norm.min().item():.6f}")
+            # print(f"Spatial L2 norm max: {spatial_norm.max().item():.6f}")
+            # print(f"Spatial L2 norm mean: {spatial_norm.mean().item():.6f}")
+            
+            # # If there are non-spatial features, analyze them too
+            # if out1.shape[2] > 3:
+            #     non_spatial_out = out1[..., 3:]
+            #     print(f"\nNon-spatial output shape: {non_spatial_out.shape}")
+            #     print(f"Non-spatial output min: {non_spatial_out.min().item():.6f}")
+            #     print(f"Non-spatial output max: {non_spatial_out.max().item():.6f}")
+            #     print(f"Non-spatial output mean: {non_spatial_out.mean().item():.6f}")
+            #     print(f"Non-spatial output std: {non_spatial_out.std().item():.6f}")
+            
+            # # Analyze distribution per dimension
+            # print("\nDistribution across spatial dimensions:")
+            # for i in range(3):
+            #     dim_data = spatial_out[..., i]
+            #     print(f"Dimension {i}: min={dim_data.min().item():.6f}, max={dim_data.max().item():.6f}, " 
+            #           f"mean={dim_data.mean().item():.6f}, std={dim_data.std().item():.6f}")
+            
+            # # Compare input and output scales
+            # input_scale = torch.norm(x, dim=2).mean().item()
+            # output_scale = spatial_norm.mean().item()
+            # print(f"\nInput position scale (mean L2 norm): {input_scale:.6f}")
+            # print(f"Output scale (mean L2 norm): {output_scale:.6f}")
+            # print(f"Output/Input scale ratio: {output_scale/input_scale:.6f}")
+
+            break
+    
+    return results
+
+def check_mask_correct(variables, node_mask):
+    for i, variable in enumerate(variables):
+        if len(variable) > 0:
+            assert_correctly_masked(variable, node_mask)
+
+def test_equivariance_multi_seeds(num_tests=10):
+    """运行多个随机种子的测试并统计结果"""
+    # 使用当前时间生成一个主随机种子
+    import random
+    import time
+    random.seed(int(time.time()))
+    
+    # 随机生成多个测试种子
+    seeds = [random.randint(1, 100000) for _ in range(num_tests)]
+    num_seeds = len(seeds)
+    
+    # 记录所有结果
+    all_results = []
+    
+    # 运行多次测试
+    for i, seed in enumerate(seeds):
+        print(f"\n[{i+1}/{num_seeds}] Testing with random seed: {seed}")
+        results = test_equivariance_with_seed(seed)
+        all_results.append(results)
+        
+        # 显示当前结果
+        print(f"  Rotation invariance error: {results['rotation_invariance_error']:.8f}")
+        print(f"  Rotation invariance error on h: {results['rotation_invariance_error_h']:.8f}")
+        print(f"  Rotation equivariance error: {results['rotation_equivariance_error']:.8f}")
+    
+    # 计算统计结果
+    stats = {metric: {} for metric in all_results[0].keys()}
+    
+    # for metric in stats.keys():
+    #     values = [result[metric] for result in all_results]
+    #     stats[metric]['mean'] = sum(values) / len(values)
+    #     stats[metric]['min'] = min(values)
+    #     stats[metric]['max'] = max(values)
+    #     stats[metric]['std'] = (sum((x - stats[metric]['mean'])**2 for x in values) / len(values))**0.5
+    
+    # # 显示统计结果
+    # print("\n" + "="*60)
+    # print(f"RESULTS OVER {num_seeds} RANDOM SEEDS")
+    # print("="*60)
+    
+    # metrics_display = {
+    #     'rotation_invariance_error': 'Rotation invariance error (spatial)',
+    #     'rotation_invariance_error_h': 'Rotation invariance error (non-spatial)',
+    #     'rotation_equivariance_error': 'Rotation equivariance error'
+    # }
+    
+    # for metric, display_name in metrics_display.items():
+    #     print(f"\n{display_name}:")
+    #     print(f"  Mean: {stats[metric]['mean']:.8f}")
+    #     print(f"  Min:  {stats[metric]['min']:.8f}")
+    #     print(f"  Max:  {stats[metric]['max']:.8f}")
+    #     print(f"  Std:  {stats[metric]['std']:.8f}")
+    
+    return stats, all_results
+
+if __name__ == "__main__":
+    # 您可以在这里指定要运行的测试次数
+    num_tests = 10
+    stats, results = test_equivariance_multi_seeds(num_tests)
+    
