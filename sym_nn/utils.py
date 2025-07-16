@@ -129,6 +129,6 @@ class GaussianLayer(nn.Module):
         std = self.stds.weight.float().view(-1).abs() + 1e-2
         pos_emb = gaussian(pos_emb.float(), mean, std).type_as(self.means.weight)  # [bs, n_nodes, n_nodes, K]
         #Test: vanilla distance
-        pos_emb = dist_mat.expand(-1, -1, -1, self.K)
+        # pos_emb = dist_mat.expand(-1, -1, -1, self.K)
         pos_emb = pos_emb * node_mask[:, :, :, None] * node_mask[:, None, :, :]
         return pos_emb

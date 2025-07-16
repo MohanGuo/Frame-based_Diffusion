@@ -3,8 +3,7 @@ import torch.nn as nn
 import math
 import numpy as np
 # from .transformer import Transformer
-from .transformer_new import Transformer
-from .mpnn import LEquiMPNNQM9
+from .transformer_conditional import DiT
 import sys
 sys.path.append('..')
 from equivariant_diffusion.utils import remove_mean, remove_mean_with_mask, assert_mean_zero_with_mask
@@ -12,18 +11,16 @@ from egnn.models import EGNN_dynamics_QM9_MC
 from egnn.egnn_mc import EGNN as EGNN_mc
 import time
 from torch_geometric.nn import global_mean_pool, global_add_pool
-from sym_nn.utils import qr, orthogonal_haar, GaussianLayer
-from sym_nn.dit import DiT
+from sym_nn.utils import GaussianLayer
 EPS = 1e-8
 
 class TransformerDynamics_2(nn.Module):
     def __init__(self, args, egnn, in_node_nf, context_node_nf, n_dims, 
                  hidden_nf=64, device='cpu', n_heads=4, 
                  n_layers=4, condition_time=True, debug=False):
-                #  norm_constant=0,
-                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'):
 
         super().__init__()
+        in_node_nf -= 1
         self.in_node_nf = in_node_nf
         self.context_node_nf = context_node_nf
         self.device = device
@@ -31,14 +28,26 @@ class TransformerDynamics_2(nn.Module):
         self._edges_dict = {}
         self.condition_time = condition_time
 
-        # self.egnn = EGNN_dynamics_QM9_MC(in_node_nf=in_node_nf, context_node_nf=args.context_node_nf,
-        #          n_dims=3, device=device, hidden_nf=args.nf,
-        #          act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
-        #         num_vectors=7, num_vectors_out=2
-        #          )
         self.egnn = egnn
 
-        in_node_nf -= 1
+        
+        self.feature_embedding = nn.Sequential(
+            nn.Linear(in_node_nf, hidden_nf),
+            nn.SiLU(),
+            nn.Linear(hidden_nf, 2)
+        )
+
+        # self.transformer = Transformer(
+        #     args=args,
+        #     in_node_nf=in_node_nf + context_node_nf,
+        #     device=device,
+        #     d_model=hidden_nf,
+        #     num_heads=n_heads,
+        #     num_layers=n_layers,
+        #     d_ff=hidden_nf*4,
+        #     dropout=0.1,
+        #     edge_dim = 8 #4
+        # )
         #DiT init
         self.gaussian_embedder = GaussianLayer(K=184)
         xh_hidden_size = 184
@@ -56,7 +65,9 @@ class TransformerDynamics_2(nn.Module):
             out_channels=n_dims+in_node_nf+context_node_nf,
             hidden_size=hidden_size, depth=depth, num_heads=num_heads, 
             mlp_ratio=mlp_ratio, mlp_dropout=mlp_dropout, mlp_type=mlp_type,
-            use_fused_attn=True, x_emb="identity")
+            use_fused_attn=True, x_emb="identity",
+            edge_dim=8,
+            d_model=hidden_nf)
 
         def _basic_init(module):
             if isinstance(module, nn.Linear):
@@ -67,11 +78,19 @@ class TransformerDynamics_2(nn.Module):
         self.xh_embedder.apply(_basic_init)
         self.pos_embedder.apply(_basic_init)
 
+    def forward(self, t, xh, node_mask, edge_mask, context=None):
+        raise NotImplementedError
 
+    def wrap_forward(self, node_mask, edge_mask, context):
+        def fwd(time, state):
+            return self._forward(time, state, node_mask, edge_mask, context)
+        return fwd
+
+    def unwrap_forward(self):
+        return self._forward
 
     def _forward(self, t, xh, node_mask, edge_mask, context):
         # start_1 = time.time()
-        assert context is None
         bs, n_nodes, dims = xh.shape
         h_dims = dims - self.n_dims
         edges = self.get_adj_matrix(n_nodes, bs, self.device)
@@ -80,21 +99,62 @@ class TransformerDynamics_2(nn.Module):
         x_input =remove_mean_with_mask(xh[..., :self.n_dims], node_mask)
         x_input = x_input.view(bs*n_nodes, -1)
         
-        xh = xh.view(bs*n_nodes, -1)
+        xh = xh.view(bs*n_nodes, -1)#.clone() * node_mask
+
         h = xh[:, self.n_dims:].clone()
         
+        #add t into egnn
+        # if np.prod(t.size()) == 1:
+        #         # t is the same for all elements in batch.
+        #         h_time = torch.empty_like(h[:, 0:1]).fill_(t.item())
+        # else:
+        #     # t is different over the batch dimension.
+        #     h_time = t.view(bs, 1).repeat(1, n_nodes)
+        #     h_time = h_time.view(bs * n_nodes, 1)
+        # h_egnn = torch.cat([h.clone(), h_time], dim=1)
         h_egnn = h.clone()
+
         
         node_mask = node_mask.view(bs*n_nodes, 1)
         edge_mask = edge_mask.view(bs*n_nodes*n_nodes, 1)
         
 
         ################## MG: pass egnn to get invariant coordinates ###################
+        ##Multichannel
         output, vel_inverse, pose = self.egnn._forward(h_egnn, x_input, edges, node_mask, edge_mask, context=None, bs=bs, n_nodes=n_nodes, dims=dims)
         x_invariant = output[..., :self.n_dims]
+        # print(f"x_invariant: {x_invariant[0]}")
+        # x_invariant = x_invariant.view(bs*n_nodes, -1)
         x_invariant = x_invariant.view(bs, n_nodes, -1)
         x_invariant = remove_mean_with_mask(x_invariant, node_mask.view(bs, n_nodes, 1))
         #################################################################################
+        
+        ######edge bias#####
+        # x_invariant_edge = x_invariant.view(bs*n_nodes, -1)
+        # radial, coord_diff = coord2diff(x_invariant_edge, edges)
+        # coord_diff = coord_diff.view(bs, n_nodes, n_nodes, 3)
+        # radial = radial.view(bs, n_nodes, n_nodes, 1)
+
+        radial, coord_diff = coord2diff(x_input, edges)
+        coord_diff = coord_diff.view(bs, n_nodes, n_nodes, 3)
+        radial = radial.view(bs, n_nodes, n_nodes, 1)
+        pose_edge = pose.view(bs, n_nodes, 3, 3)
+        coord_diff_reshaped = coord_diff.unsqueeze(-2)
+        #local frame
+        # transformed_coord = torch.einsum('bijpk,bikm->bijpm', coord_diff_reshaped, pose_edge.permute(0, 1, 3, 2)).squeeze(-2)
+        #global frame
+        pose_avg = pose_edge.mean(dim=1)
+        transformed_coord = torch.einsum('bijpk,bkm->bijpm', coord_diff_reshaped, pose_avg.permute(0, 2, 1)).squeeze(-2)
+
+        #add h into edge features
+        h_embedded = self.feature_embedding(h)
+        rows, cols = edges
+        h_i = h_embedded[rows]
+        h_j = h_embedded[cols]
+        node_edge_features = torch.cat([h_i, h_j], dim=1)
+        node_features_matrix = node_edge_features.view(bs, n_nodes, n_nodes, -1)
+        edge_features = torch.cat([radial, transformed_coord, node_features_matrix], dim=-1)
+
 
         ######DiT input#####
         x = xh[:, 0:self.n_dims].clone()
@@ -107,14 +167,14 @@ class TransformerDynamics_2(nn.Module):
         # xh = torch.cat([x.clone(), h.view(bs, n_nodes, -1)], dim=-1)
         xh = torch.cat([x_invariant.clone(), h.view(bs, n_nodes, -1)], dim=-1)
         xh = xh.view(bs, n_nodes, -1)
-        # print(f"xh: {xh}")
+        # print(f"xh: {xh.shape}")
         xh = self.xh_embedder(xh)
         # print(f"xh: {xh}")
         xh = node_mask * torch.cat([xh, pos_emb], dim=-1)
+
+        ######DiT##########
         # print(f"xh: {xh}")
-
-        xh = node_mask * self.model(xh, t.squeeze(-1), node_mask.squeeze(-1))
-
+        xh = node_mask * self.model(t.squeeze(-1), xh, edge_features, node_mask=node_mask, batch_size=bs, n_nodes=n_nodes)
         # print(f"xh: {xh}")
         x_final = xh[:, :, :self.n_dims] 
         h_final = xh[:, :, self.n_dims:]
@@ -123,39 +183,33 @@ class TransformerDynamics_2(nn.Module):
         x_final = x_final.view(bs * n_nodes, -1)
         h_final = h_final.view(bs * n_nodes, -1)
         
-        
         ################# if transform back #####################
-        # print(f"Shape of x_final: {x_final.shape}")
-        # print(f"Shape of pose: {pose.shape}")
-        # # #x_final: [bs*nodes, 3]
         x_final_equivariant = torch.bmm(x_final.unsqueeze(1), pose).squeeze(1)
-        # vel = (x_final) * node_mask
+        # vel = (x_final_equivariant) * node_mask
         x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)  # 恢复bs维度
         x_final_equivariant = remove_mean_with_mask(x_final_equivariant, node_mask)
         vel = (x_final_equivariant)
-        # vel = x_final.view(bs, n_nodes, -1) 
         #########################################################
-        # vel = x_final.view(bs, n_nodes, -1) 
 
-        # vel = vel.view(bs, n_nodes, -1)
 
         if torch.any(torch.isnan(vel)):
             print('Warning: detected nan, resetting transformer output to zero.')
             vel = torch.zeros_like(vel)
+
+        if node_mask is None:
+            vel = remove_mean(vel)
+            print("No mask!")
+        else:
+            vel = remove_mean_with_mask(vel, node_mask.view(bs, n_nodes, 1))
+            # print(f"Remove mean with mask!")
 
         # print(f"Shape of node_mask: {node_mask}")
         assert_mean_zero_with_mask(vel, node_mask.view(bs, n_nodes, 1))
 
         # start_5 = time.time()
         # print(f'One forward took {start_5 - start_1:.2f} seconds')
-        # print(f"vel: {vel}")
-
-        if h_dims == 0:
-            return vel
-        else:
-            h_final = h_final.view(bs, n_nodes, -1)
-            # print(f"Shape of h_final in stage 3: {h_final.shape}")
-            return torch.cat([vel, h_final], dim=2)
+        h_final = h_final.view(bs, n_nodes, -1)
+        return torch.cat([vel, h_final], dim=2)
 
     def get_adj_matrix(self, n_nodes, batch_size, device):
         if n_nodes in self._edges_dict:

@@ -6,7 +6,7 @@ except ModuleNotFoundError:
 import utils
 import argparse
 from qm9 import dataset
-from models import get_model_2
+from models import get_diffusion
 import os
 from equivariant_diffusion.utils import assert_mean_zero_with_mask, remove_mean_with_mask,\
     assert_correctly_masked
@@ -146,7 +146,7 @@ def main():
     dataset_info = get_dataset_info(args.dataset, args.remove_h)
 
     # Load model
-    generative_model, nodes_dist, prop_dist = get_model_2(args, device, dataset_info, dataloaders['train'])
+    generative_model, nodes_dist, prop_dist = get_diffusion(args, device, dataset_info, dataloaders['train'])
     if prop_dist is not None:
         property_norms = compute_mean_mad(dataloaders, args.conditioning, args.dataset)
         prop_dist.set_normalizer(property_norms)
@@ -156,78 +156,78 @@ def main():
     flow_state_dict = torch.load(join(eval_args.model_path, fn), map_location=device)
     generative_model.load_state_dict(flow_state_dict)
 
-    # ##################### MG: model parameters check ##########################
-    # # Print model parameters
-    # print("Model structure:")
-    # print(generative_model)
-    # print("\nModel keys:")
-    # model_keys = list(generative_model.state_dict().keys())
-    # print(f"Number of model parameters: {len(model_keys)}")
-    # print(model_keys[:10])  # Print first 10 keys as example
+    ##################### MG: model parameters check ##########################
+    # Print model parameters
+    print("Model structure:")
+    print(generative_model)
+    print("\nModel keys:")
+    model_keys = list(generative_model.state_dict().keys())
+    print(f"Number of model parameters: {len(model_keys)}")
+    print(model_keys[:10])  # Print first 10 keys as example
 
-    # print("\nCheckpoint keys:")
-    # checkpoint_keys = list(flow_state_dict.keys())
-    # print(f"Number of checkpoint parameters: {len(checkpoint_keys)}")
-    # print(checkpoint_keys[:10])  # Print first 10 keys as example
+    print("\nCheckpoint keys:")
+    checkpoint_keys = list(flow_state_dict.keys())
+    print(f"Number of checkpoint parameters: {len(checkpoint_keys)}")
+    print(checkpoint_keys[:10])  # Print first 10 keys as example
 
-    # # Find missing keys
-    # missing_keys = set(model_keys) - set(checkpoint_keys)
-    # print(f"\nNumber of missing keys: {len(missing_keys)}")
-    # if len(missing_keys) > 0:
-    #     print("Some missing keys:")
-    #     print(list(missing_keys)[:20])  # Print first 20 missing keys
+    # Find missing keys
+    missing_keys = set(model_keys) - set(checkpoint_keys)
+    print(f"\nNumber of missing keys: {len(missing_keys)}")
+    if len(missing_keys) > 0:
+        print("Some missing keys:")
+        print(list(missing_keys)[:20])  # Print first 20 missing keys
 
-    # # Check extra keys in checkpoint
-    # extra_keys = set(checkpoint_keys) - set(model_keys)
-    # print(f"\nNumber of extra keys: {len(extra_keys)}")
-    # if len(extra_keys) > 0:
-    #     print("Some extra keys:")
-    #     print(list(extra_keys)[:20])  # Print first 20 extra keys
+    # Check extra keys in checkpoint
+    extra_keys = set(checkpoint_keys) - set(model_keys)
+    print(f"\nNumber of extra keys: {len(extra_keys)}")
+    if len(extra_keys) > 0:
+        print("Some extra keys:")
+        print(list(extra_keys)[:20])  # Print first 20 extra keys
 
-    # # Print all parameters from the model
+    # Print all parameters from the model
+    print("\n" + "=" * 80)
+    print("ALL MODEL PARAMETERS")
+    print("=" * 80)
+    model_dict = generative_model.state_dict()
+    for key in model_keys:
+        param = model_dict[key]
+        print(f"\nParameter: {key}")
+        print(f"Shape: {param.shape}, Type: {param.dtype}")
+        print(f"Values: {param}")
+
+    # # Print all parameters from the checkpoint
     # print("\n" + "=" * 80)
-    # print("ALL MODEL PARAMETERS")
+    # print("ALL CHECKPOINT PARAMETERS")
     # print("=" * 80)
-    # model_dict = generative_model.state_dict()
-    # for key in model_keys:
-    #     param = model_dict[key]
+    # for key in checkpoint_keys:
+    #     param = flow_state_dict[key]
     #     print(f"\nParameter: {key}")
     #     print(f"Shape: {param.shape}, Type: {param.dtype}")
     #     print(f"Values: {param}")
 
-    # # # Print all parameters from the checkpoint
-    # # print("\n" + "=" * 80)
-    # # print("ALL CHECKPOINT PARAMETERS")
-    # # print("=" * 80)
-    # # for key in checkpoint_keys:
-    # #     param = flow_state_dict[key]
-    # #     print(f"\nParameter: {key}")
-    # #     print(f"Shape: {param.shape}, Type: {param.dtype}")
-    # #     print(f"Values: {param}")
+    # Save parameters to files as backup (in case console output is too large)
+    import os
+    log_dir = os.path.join(eval_args.model_path, 'parameter_logs')
+    os.makedirs(log_dir, exist_ok=True)
 
-    # # Save parameters to files as backup (in case console output is too large)
-    # import os
-    # log_dir = os.path.join(eval_args.model_path, 'parameter_logs')
-    # os.makedirs(log_dir, exist_ok=True)
+    # Save model parameters to file
+    with open(os.path.join(log_dir, 'model_parameters.txt'), 'w') as f:
+        for key in model_keys:
+            param = model_dict[key]
+            f.write(f"\nParameter: {key}\n")
+            f.write(f"Shape: {param.shape}, Type: {param.dtype}\n")
+            f.write(f"Values: {param}\n")
 
-    # # Save model parameters to file
-    # with open(os.path.join(log_dir, 'model_parameters.txt'), 'w') as f:
-    #     for key in model_keys:
-    #         param = model_dict[key]
-    #         f.write(f"\nParameter: {key}\n")
-    #         f.write(f"Shape: {param.shape}, Type: {param.dtype}\n")
-    #         f.write(f"Values: {param}\n")
+    # Save checkpoint parameters to file
+    with open(os.path.join(log_dir, 'checkpoint_parameters.txt'), 'w') as f:
+        for key in checkpoint_keys:
+            param = flow_state_dict[key]
+            f.write(f"\nParameter: {key}\n")
+            f.write(f"Shape: {param.shape}, Type: {param.dtype}\n")
+            f.write(f"Values: {param}\n")
 
-    # # Save checkpoint parameters to file
-    # with open(os.path.join(log_dir, 'checkpoint_parameters.txt'), 'w') as f:
-    #     for key in checkpoint_keys:
-    #         param = flow_state_dict[key]
-    #         f.write(f"\nParameter: {key}\n")
-    #         f.write(f"Shape: {param.shape}, Type: {param.dtype}\n")
-    #         f.write(f"Values: {param}\n")
-
-    # print(f"\nParameters have also been saved to files in {log_dir}")
-    # #############################################################
+    print(f"\nParameters have also been saved to files in {log_dir}")
+    #############################################################
 
     # Analyze stability, validity, uniqueness and novelty
     stability_dict, rdkit_metrics = analyze_and_save(

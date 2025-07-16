@@ -11,7 +11,7 @@ from configs.datasets_config import get_dataset_info
 # from data.dataset import QM9Wrapper
 from os.path import join
 from qm9 import dataset
-from models import get_optim, get_diffusion
+from models import get_optim, get_diffusionn, get_egnn #get_model, get_model_2
 # from model.diffusion import EnVariationalDiffusion
 from model.diffusion_2 import EnVariationalDiffusion_2
 from equivariant_diffusion.utils import assert_correctly_masked
@@ -22,17 +22,14 @@ import pickle
 from qm9.utils import prepare_context, compute_mean_mad
 from train_test import train_epoch, test, analyze_and_save
 from egnn.egnn import EGNN
-
-
-
-#Params
 parser = argparse.ArgumentParser(description='E3Diffusion')
 
-#New Params
 parser.add_argument('--use_pretrain', action='store_true', help='Use pretrained egnn')
 parser.add_argument('--pretrained_model_path', type=str, help='Use pretrained egnn')
 parser.add_argument('--fix_egnn', action='store_true', help='Use pretrained egnn')
-parser.add_argument('--inte_model', type=str, help='Internal Model')
+parser.add_argument('--clipping_type', type=str, default="queue")  # default from EDM
+parser.add_argument('--max_grad_norm', type=float, default=1.5)  # NOTE: LEO
+
 
 parser.add_argument('--exp_name', type=str, default='debug_10')
 parser.add_argument('--model', type=str, default='egnn_dynamics',
@@ -40,10 +37,6 @@ parser.add_argument('--model', type=str, default='egnn_dynamics',
                          'kernel_dynamics | egnn_dynamics |gnn_dynamics')
 parser.add_argument('--probabilistic_model', type=str, default='diffusion',
                     help='diffusion')
-parser.add_argument('--clipping_type', type=str, default="queue")  # default from EDM
-parser.add_argument('--max_grad_norm', type=float, default=1.5)  # NOTE: LEO
-parser.add_argument('--no_edge_features', action='store_true', help='Use edge features')
-
 
 # Training complexity is O(1) (unaffected), but sampling complexity is O(steps).
 parser.add_argument('--diffusion_steps', type=int, default=500)
@@ -215,9 +208,6 @@ args.context_node_nf = context_node_nf
 # Create dynamic flow
 
 # model, nodes_dist, prop_dist, egnn = get_model(args, device, dataset_info, dataloaders['train'])
-# if args.train_egnn:
-#     model, nodes_dist, prop_dist = get_egnn(args, device, dataset_info, dataloaders['train'])
-# elif args.train_diffusion:
 model, nodes_dist, prop_dist = get_diffusion(args, device, dataset_info, dataloaders['train'])
 
 if prop_dist is not None:

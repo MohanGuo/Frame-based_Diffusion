@@ -60,7 +60,7 @@ class equivariant_layer(nn.Module):
         norm_vec = (pos_i - pos_j) / (torch.norm(pos_i - pos_j, dim=-1, keepdim=True) + EPS)
         return norm_vec * coe * mes_1, norm_vec * coe * mes_2
 
-EPS = 1e-10
+EPS = 1e-12
 class EGNN_dynamics_QM9_MC(nn.Module):
     def __init__(self, in_node_nf, context_node_nf,
                  n_dims, hidden_nf=64, device='cpu',
@@ -187,8 +187,8 @@ class EGNN_dynamics_QM9_MC(nn.Module):
         epsilon= 1e-16
         vel_q_epsilon = vel_q + identity * epsilon
 
-        vel_inverse = torch.inverse(vel_q_epsilon)
-        # vel_inverse = vel_q_epsilon.permute(0, 2, 1)
+        # vel_inverse = torch.inverse(vel_q_epsilon)
+        vel_inverse = vel_q_epsilon.permute(0, 2, 1)
 
         if torch.any(torch.isnan(vel_inverse)):
             print('Warning: detected nan in vel_inverse')

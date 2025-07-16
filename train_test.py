@@ -10,6 +10,7 @@ import qm9.utils as qm9utils
 from qm9 import losses
 import time
 import torch
+from tqdm import tqdm
 
 
 def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dtype, property_norms, optim, optim_egnn,
@@ -124,7 +125,8 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
 
         if args.clip_grad:
             # print("Gradient bomb!")
-            grad_norm = utils.gradient_clipping(model, gradnorm_queue)
+            # grad_norm = utils.gradient_clipping(model, gradnorm_queue)
+            grad_norm = utils.gradient_clipping(args, model, gradnorm_queue, clipping_type=args.clipping_type)
         else:
             grad_norm = 0.
 
@@ -277,27 +279,50 @@ def sample_different_sizes_and_save(model, nodes_dist, args, device, dataset_inf
                           batch_size * counter, name='molecule')
 
 
+# def analyze_and_save(epoch, model_sample, nodes_dist, args, device, dataset_info, prop_dist,
+#                      n_samples=1000, batch_size=100):
+#     print(f'Analyzing molecule stability at epoch {epoch}...')
+#     batch_size = min(batch_size, n_samples)
+#     assert n_samples % batch_size == 0
+#     molecules = {'one_hot': [], 'x': [], 'node_mask': []}
+#     for i in range(int(n_samples/batch_size)):
+#         nodesxsample = nodes_dist.sample(batch_size)
+#         one_hot, charges, x, node_mask = sample(args, device, model_sample, dataset_info, prop_dist,
+#                                                 nodesxsample=nodesxsample)
+
+#         molecules['one_hot'].append(one_hot.detach().cpu())
+#         molecules['x'].append(x.detach().cpu())
+#         molecules['node_mask'].append(node_mask.detach().cpu())
+
+#     molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
+#     validity_dict, rdkit_tuple = analyze_stability_for_molecules(molecules, dataset_info)
+
+#     wandb.log(validity_dict)
+#     if rdkit_tuple is not None:
+#         wandb.log({'Validity': rdkit_tuple[0][0], 'Uniqueness': rdkit_tuple[0][1], 'Novelty': rdkit_tuple[0][2]})
+#     return validity_dict
 def analyze_and_save(epoch, model_sample, nodes_dist, args, device, dataset_info, prop_dist,
                      n_samples=1000, batch_size=100):
-    print(f'Analyzing molecule stability at epoch {epoch}...')
-    batch_size = min(batch_size, n_samples)
-    assert n_samples % batch_size == 0
-    molecules = {'one_hot': [], 'x': [], 'node_mask': []}
-    for i in range(int(n_samples/batch_size)):
-        nodesxsample = nodes_dist.sample(batch_size)
-        one_hot, charges, x, node_mask = sample(args, device, model_sample, dataset_info, prop_dist,
+    print(f'Analyzing molecule stability at epoch {epoch}... for {n_samples}')
+    with torch.no_grad():
+        batch_size = min(batch_size, n_samples)
+        assert n_samples % batch_size == 0
+        molecules = {'one_hot': [], 'x': [], 'node_mask': []}
+        for i in tqdm(range(int(n_samples/batch_size))):
+            nodesxsample = nodes_dist.sample(batch_size)
+            one_hot, charges, x, node_mask = sample(args, device, model_sample, dataset_info, prop_dist,
                                                 nodesxsample=nodesxsample)
 
-        molecules['one_hot'].append(one_hot.detach().cpu())
-        molecules['x'].append(x.detach().cpu())
-        molecules['node_mask'].append(node_mask.detach().cpu())
+            molecules['one_hot'].append(one_hot.detach().cpu())
+            molecules['x'].append(x.detach().cpu())
+            molecules['node_mask'].append(node_mask.detach().cpu())
 
-    molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
-    validity_dict, rdkit_tuple = analyze_stability_for_molecules(molecules, dataset_info)
+        molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
+        validity_dict, rdkit_tuple = analyze_stability_for_molecules(molecules, dataset_info)  # atm stable, mol stable
 
-    wandb.log(validity_dict)
-    if rdkit_tuple is not None:
-        wandb.log({'Validity': rdkit_tuple[0][0], 'Uniqueness': rdkit_tuple[0][1], 'Novelty': rdkit_tuple[0][2]})
+        wandb.log(validity_dict)
+        if rdkit_tuple is not None:
+            wandb.log({'Validity': rdkit_tuple[0][0], 'Uniqueness': rdkit_tuple[0][1], 'Novelty': rdkit_tuple[0][2]})
     return validity_dict
 
 

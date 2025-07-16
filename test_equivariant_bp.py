@@ -71,13 +71,13 @@ def test_equivariance_with_seed(seed):
     loader = dataloaders['train']
     dataset_info = get_dataset_info('qm9', False)
 
-    dynamics_in_node_nf = len(dataset_info['atom_decoder']) + int(False) + 1
+    dynamics_in_node_nf = len(dataset_info['atom_decoder']) + int(False)
     context_node_nf = 0
     nf = 128
     n_layers = 8
 
     debug = False
-    egnn = EGNN_dynamics_QM9_MC(in_node_nf=dynamics_in_node_nf - 1, context_node_nf=context_node_nf,
+    egnn = EGNN_dynamics_QM9_MC(in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
                  n_dims=3, device=device, hidden_nf=nf,
                  act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
                 #  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
@@ -89,7 +89,7 @@ def test_equivariance_with_seed(seed):
     model = TransformerDynamics_2(
         args=cfg,
         egnn=egnn,
-        in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
+        in_node_nf=dynamics_in_node_nf + 1, context_node_nf=context_node_nf,
         n_dims=3, device=device, hidden_nf=nf,
         n_heads=8,
         n_layers=n_layers,
@@ -138,8 +138,12 @@ def test_equivariance_with_seed(seed):
             #     [0.0, -1.0, 0.0],
             #     [0.0, 0.0, 1.0]
             # ], device=device)
-            # # Repeat the matrix for each item in the batch
-            # rotation_matrices = rotation_matrix.unsqueeze(0).repeat(batch_size, 1, 1)
+            rotation_matrix = torch.tensor([[ 0.61237244,  0.12708369,  0.78033009],
+            [ 0.35355339,  0.89208573, -0.28355323],
+            [-0.70710678,  0.43301270,  0.55901699]], device=device)
+            
+            # Repeat the matrix for each item in the batch
+            rotation_matrices = rotation_matrix.unsqueeze(0).repeat(batch_size, 1, 1)
     
             xh_rot = xh.clone()
             # xh[..., :3] 形状为 [batch_size, num_nodes, 3]

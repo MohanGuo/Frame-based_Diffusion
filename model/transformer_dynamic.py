@@ -139,8 +139,11 @@ class TransformerDynamics_2(nn.Module):
         # self.debug=debug
 
 
-    def _forward(self, t, xh, node_mask, edge_mask, context):
+    def _forward(self, t, xh, node_mask, edge_mask, context, no_edge_features=False):
         # start_1 = time.time()
+        #############include edge features or not###########
+        # no_edge_features = True
+
         bs, n_nodes, dims = xh.shape
         h_dims = dims - self.n_dims
         edges = self.get_adj_matrix(n_nodes, bs, self.device)
@@ -210,13 +213,15 @@ class TransformerDynamics_2(nn.Module):
             context = context.view(bs*n_nodes, self.context_node_nf)
             h = torch.cat([h, context], dim=1)
 
-        radial, coord_diff = coord2diff(x_input, edges)
+        radial, coord_diff = coord2diff(x_invariant, edges)
+        # radial, coord_diff = coord2diff(x_input, edges)
         coord_diff = coord_diff.view(bs, n_nodes, n_nodes, 3)
         radial = radial.view(bs, n_nodes, n_nodes, 1)
         pose_edge = pose.view(bs, n_nodes, 3, 3)
         coord_diff_reshaped = coord_diff.unsqueeze(-2)
         #local frame
-        transformed_coord = torch.einsum('bijpk,bikm->bijpm', coord_diff_reshaped, pose_edge.permute(0, 1, 3, 2)).squeeze(-2)
+        transformed_coord = coord_diff
+        # transformed_coord = torch.einsum('bijpk,bikm->bijpm', coord_diff_reshaped, pose_edge.permute(0, 1, 3, 2)).squeeze(-2)
 
         #global frame
         # pose_avg = pose_edge.mean(dim=1)
@@ -244,16 +249,21 @@ class TransformerDynamics_2(nn.Module):
         edge_features = torch.cat([radial, transformed_coord, node_features_matrix], dim=-1)
         # edge_features = torch.cat([radial, radial, radial, radial], dim=-1)
         # print(f"edge_features: {edge_features[0, 0, 1]}")
-        
+        if no_edge_features:
+            edge_features = None
+        else:
+            if torch.any(torch.isnan(edge_features)):
+                print('Warning: detected nan in edge_features')
+                edge_features = torch.zeros_like(edge_features)
 
         # edge_features = None
         # if torch.any(torch.isnan(x_invariant)):
         #     print('Warning: detected nan in x_invariant')
         # if torch.any(torch.isnan(h)):
         #     print('Warning: detected nan in h')
-        if torch.any(torch.isnan(edge_features)):
-            print('Warning: detected nan in edge_features')
-            edge_features = torch.zeros_like(edge_features)
+        # if torch.any(torch.isnan(edge_features)):
+        #     print('Warning: detected nan in edge_features')
+        #     edge_features = torch.zeros_like(edge_features)
         h_final, x_final = self.transformer(h, x_invariant, edge_features, node_mask=node_mask, batch_size=bs)
         # x_final = x_invariant
         # h_final = h
