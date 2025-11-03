@@ -17,8 +17,6 @@ torch.random.manual_seed(1)
 dtype = torch.float
 
 def test_equivariance_with_seed(seed):
-    """运行单次等变性测试并返回指定的误差指标"""
-    # 设置随机种子
     torch.random.manual_seed(seed)
 
     # Model setup

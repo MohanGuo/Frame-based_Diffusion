@@ -163,7 +163,7 @@ class TransformerEncoder(nn.Module):
         batch_size = batch.node_mask.size(0)  # 32
         seq_length = batch.node_mask.size(1)  # 24
         
-        # 重塑x为三维张量
+        # x
         x = x.view(batch_size, seq_length, self.d_model)
         x = self.transformer.forward(x, src_key_padding_mask=(~batch.node_mask))
         # print(f"x output shape: {x.shape}")
@@ -257,7 +257,7 @@ class TransformerDecoder(nn.Module):
         batch_size = node_mask.size(0)  # 32
         seq_length = node_mask.size(1)  # 24
         
-        # 重塑x为三维张量
+        # x
         x = x.view(batch_size, seq_length, -1)
         x = self.transformer.forward(x, src_key_padding_mask=(~node_mask))
         # print(f"x output shape: {x.shape}")
@@ -318,28 +318,28 @@ class VAE_Point(nn.Module):
         
         d_model = self.encoder.d_model
         
-        # 为x和h分别创建量化层
-        # 坐标x的量化层
+        # xh
+        # x
         self.x_quant_conv = torch.nn.Linear(d_model, 2 * latent_dim, bias=False)
         self.x_post_quant_conv = torch.nn.Linear(latent_dim, d_model, bias=False)
         
-        # 节点特征h的量化层
+        # h
         self.h_quant_conv = torch.nn.Linear(d_model, 2 * latent_dim, bias=False)
         self.h_post_quant_conv = torch.nn.Linear(latent_dim, d_model, bias=False)
 
     def encode(self, batch):
         encoded_batch = self.encoder(batch)
         
-        # 编码x
+        # x
         x_moments = self.x_quant_conv(encoded_batch["x"])
         x_posterior = DiagonalGaussianDistribution(x_moments)
         
-        # 编码h - 首先将h通过编码器处理
-        h_encoded = self.encoder.h_embedding(batch.h)  # 使用编码器的h嵌入
+        # h - h
+        h_encoded = self.encoder.h_embedding(batch.h)  # h
         h_moments = self.h_quant_conv(h_encoded)
         h_posterior = DiagonalGaussianDistribution(h_moments)
         
-        # 保存所有编码结果
+        # 
         encoded_batch["x_moments"] = x_moments
         encoded_batch["x_posterior"] = x_posterior
         encoded_batch["h_moments"] = h_moments
@@ -349,15 +349,15 @@ class VAE_Point(nn.Module):
         return encoded_batch
     
     def decode(self, encoded_batch):
-        # 处理采样的坐标z
+        # z
         x_z = encoded_batch["x_z"]
         x_decoded = self.x_post_quant_conv(x_z)
         
-        # 处理采样的节点特征z
+        # z
         h_z = encoded_batch["h_z"]
         h_decoded = self.h_post_quant_conv(h_z)
         
-        # 准备解码器输入
+        # 
         decoder_input = {
             "x": x_decoded,
             "h": h_decoded,
@@ -366,20 +366,20 @@ class VAE_Point(nn.Module):
             "num_atoms": encoded_batch.get("num_atoms", None)
         }
         
-        # 通过解码器重构原始数据
+        # 
         out = self.decoder(decoder_input)
         return out
     
     def forward(self, batch, use_mean=False):
-        # 编码
+        # 
         encoded_batch = self.encode(batch)
         
         if use_mean:
-            # 使用分布的均值，而不是采样
-            encoded_batch["x_z"] = encoded_batch["x_posterior"].mode()  # 或 .mean
-            encoded_batch["h_z"] = encoded_batch["h_posterior"].mode()  # 或 .mean
+            # ，
+            encoded_batch["x_z"] = encoded_batch["x_posterior"].mode()  #  .mean
+            encoded_batch["h_z"] = encoded_batch["h_posterior"].mode()  #  .mean
         else:
-            # 正常情况：从后验分布中采样
+            # ：
             encoded_batch["x_z"] = encoded_batch["x_posterior"].sample()
             encoded_batch["h_z"] = encoded_batch["h_posterior"].sample()
         

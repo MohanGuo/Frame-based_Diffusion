@@ -248,14 +248,11 @@ class DiT(nn.Module):
     #         nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
     #         nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
-    #     # 修改为非零初始化的输出层:
-    #     # 将adaLN调制层初始化为小的非零值
     #     nn.init.normal_(self.final_layer.adaLN_modulation[-1].weight, mean=0.0, std=0.01)
     #     nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0.1)
         
-    #     # 将最终线性层初始化为小的非零值 
     #     nn.init.normal_(self.final_layer.linear.weight, mean=0.0, std=0.01)
-    #     nn.init.constant_(self.final_layer.linear.bias, 0.1)  # 使用小的常数值作为偏置
+    #     nn.init.constant_(self.final_layer.linear.bias, 0.1)
 
     #     if self.mlp_type == "swiglu":
     #         for block in self.blocks:

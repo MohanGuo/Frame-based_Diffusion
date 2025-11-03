@@ -38,8 +38,8 @@ class Attention(nn.Module):
         # if self.use_fused_attn:
         #     x = F.scaled_dot_product_attention(
         #         q, k, v,
-        #         attn_mask=attn_mask,  # bool类型
-        #         attn_bias=attn_bias,  # float类型
+        #         attn_mask=attn_mask,  # bool
+        #         attn_bias=attn_bias,  # float
         #         dropout_p=self.attn_drop.p if self.training else 0.
         #     )
         # else:

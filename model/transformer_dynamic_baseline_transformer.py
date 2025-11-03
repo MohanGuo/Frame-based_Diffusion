@@ -190,7 +190,7 @@ class TransformerDynamics_2(nn.Module):
         # # visualize_molecule(x.view(bs, n_nodes, 3), node_mask.view(bs, n_nodes, 1), batch_index=0)
         # # rot = self.random_rotation_matrix_3d()
         # rot = self.random_rotation_matrices_3d(bs) 
-        # # angle = math.pi/4  # 45度
+        # # angle = math.pi/4  # 45
         # # rot = torch.tensor([
         # #     [1.0, 0.0, 0.0],
         # #     [0.0, math.cos(angle), -math.sin(angle)],

@@ -83,23 +83,18 @@ def get_diffusion(args, device, dataset_info, dataloader_train):
     if args.fix_egnn:
         if args.use_pretrain:
             pretrained_state_dict = torch.load(args.pretrained_model_path, map_location=device)
-            # 提取EGNN相关参数
             if 'model_state_dict' in pretrained_state_dict:
-                # 由于EGNN是作为组件传入EGNN_VAE的，所以参数前缀很可能是'egnn.'
                 egnn_prefix = 'egnn.'
                 
-                # 提取EGNN参数
                 egnn_state_dict = {}
                 for key, value in pretrained_state_dict['model_state_dict'].items():
                     if key.startswith(egnn_prefix):
-                        # 去除前缀
                         new_key = key[len(egnn_prefix):]
                         egnn_state_dict[new_key] = value
                 
                 if len(egnn_state_dict) > 0:
                     print(f"Found {len(egnn_state_dict)} EGNN parameters")
                     
-                    # 尝试加载参数
                     try:
                         missing_keys, unexpected_keys = egnn.load_state_dict(egnn_state_dict, strict=False)
                         
@@ -114,9 +109,8 @@ def get_diffusion(args, device, dataset_info, dataloader_train):
                 else:
                     print("No EGNN parameters found with prefix 'egnn.'")
                     
-                    # 如果没找到，尝试打印所有键名以检查实际的前缀
                     print("Available keys in model_state_dict:")
-                    for key in list(pretrained_state_dict['model_state_dict'].keys())[:20]:  # 只打印前20个键以避免过多输出
+                    for key in list(pretrained_state_dict['model_state_dict'].keys())[:20]:
                         print(f"  {key}")
             else:
                 print("pretrained_state_dict does not contain 'model_state_dict' key")

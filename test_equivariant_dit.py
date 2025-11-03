@@ -15,7 +15,7 @@ torch.random.manual_seed(1)
 dtype = torch.float32
 
 def random_rotation_matrix():
-    """生成3D随机旋转矩阵"""
+    """3D"""
     theta = torch.randn(3)
     theta = theta / torch.norm(theta)
     K = torch.tensor([[0, -theta[2], theta[1]],
@@ -26,7 +26,7 @@ def random_rotation_matrix():
 def test_equivariance_with_seed(seed):
     torch.manual_seed(seed)
     
-    # 模型配置
+    # 
     device = 'cpu'
     cfg = SimpleNamespace(
         dataset='qm9',
@@ -42,12 +42,12 @@ def test_equivariance_with_seed(seed):
         nf=128
     )
     
-    # 数据加载
+    # 
     dataloaders, _ = dataset.retrieve_dataloaders(cfg)
     loader = dataloaders['train']
     dataset_info = get_dataset_info('qm9', False)
     
-    # 模型参数
+    # 
     dynamics_in_node_nf = len(dataset_info['atom_decoder']) + int(False)
     model_params = {
         'args': cfg,
@@ -65,77 +65,77 @@ def test_equivariance_with_seed(seed):
         'device': device
     }
     
-    # 初始化模型
+    # 
     model = DiTGaussian_dynamics(**model_params)
     model.eval()
     
     results = {}
     with torch.no_grad():
         for data in loader:
-            # 数据准备
+            # 
             x = data['positions'].to(device, dtype)
             node_mask = data['atom_mask'].to(device, dtype).unsqueeze(2)
             edge_mask = data['edge_mask'].to(device, dtype)
             one_hot = data['one_hot'].to(device, dtype)
             charges = data['charges'].to(device, dtype)
             
-            # 预处理
+            # 
             x = remove_mean_with_mask(x, node_mask)
             xh = torch.cat([x, one_hot, charges], dim=2)
             t = torch.randint(0, 1, (x.size(0), 1), device=device).float()
             
-            # 原始输出
+            # 
             out_orig = model._forward(t, xh, node_mask, edge_mask, context=None)
             
-            # ========== 旋转测试 ==========
+            # ==========  ==========
             weight = 1e6
             R = random_rotation_matrix()
             
-            # 旋转输入
+            # 
             xh_rot = xh.clone()
             xh_rot[..., :3] = torch.matmul(xh[..., :3], R.T)
-            xh_rot = xh_rot * node_mask  # 应用掩码
+            xh_rot = xh_rot * node_mask  # 
             
-            # 旋转后输出
+            # 
             out_rot = model._forward(t, xh_rot, node_mask, edge_mask, context=None)
             
-            # 计算误差指标
+            # 
             spatial_diff = out_orig[..., :3] - out_rot[..., :3]
             results['rot_invariance'] = torch.mean((spatial_diff * weight)**2).item()
             
-            # 旋转等变性检查
+            # 
             orig_rotated = torch.matmul(out_orig[..., :3], R.T)
             equiv_diff = orig_rotated - out_rot[..., :3]
             results['rot_equivariance'] = torch.mean((equiv_diff * weight)**2).item()
             
-            # ========== 平移测试 ==========
+            # ==========  ==========
             translation = torch.randn(1, 3) * 5
             xh_trans = xh.clone()
             xh_trans[..., :3] += translation
-            xh_trans = xh_trans * node_mask  # 应用掩码
+            xh_trans = xh_trans * node_mask  # 
             
-            # 平移后输出
+            # 
             out_trans = model._forward(t, xh_trans, node_mask, edge_mask, context=None)
             
-            # 平移等变性检查
+            # 
             trans_diff = out_orig[..., :3] - out_trans[..., :3]
             results['trans_equivariance'] = torch.mean((trans_diff * weight)**2).item()
             
-            # ========== 特征不变性检查 ==========
+            # ==========  ==========
             if out_orig.shape[-1] > 3:
                 feature_diff = out_orig[..., 3:] - out_rot[..., 3:]
                 results['feat_invariance'] = torch.mean((feature_diff * weight)**2).item()
             else:
                 results['feat_invariance'] = 0.0
             
-            # ========== 调试信息 ==========
+            # ==========  ==========
             print(f"\n[Debug Info] Output ranges:")
             print(f"Spatial  : {out_orig[...,:3].min():.4f} ~ {out_orig[...,:3].max():.4f}")
             print(f"Features : {out_orig[...,3:].min():.4f} ~ {out_orig[...,3:].max():.4f}")
             print(f"Rot invariance error  : {results['rot_invariance']:.6f}")
             print(f"Rot equivariance error: {results['rot_equivariance']:.6f}")
             
-            break  # 仅测试第一个batch
+            break  # batch
     
     return results
 
@@ -149,7 +149,7 @@ def test_equivariance_multi_seeds(num_tests=5):
         results = test_equivariance_with_seed(seed)
         all_results.append(results)
         
-    # 结果统计
+    # 
     metrics = ['rot_invariance', 'rot_equivariance', 'trans_equivariance', 'feat_invariance']
     stats = {
         metric: {
@@ -167,5 +167,5 @@ def test_equivariance_multi_seeds(num_tests=5):
     return stats
 
 if __name__ == "__main__":
-    # 运行5次不同种子的测试
+    # 5
     stats = test_equivariance_multi_seeds(num_tests=1)

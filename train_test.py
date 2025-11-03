@@ -54,35 +54,35 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
             context = None
 
         ############# gradient check #####################
-        # # 创建一个梯度监控字典
+        # # 
         # gradients = {}
 
-        # # 为每个参数注册梯度钩子
+        # # 
         # def hook_fn(name):
         #     def hook(grad):
         #         gradients[name] = grad.clone()
-        #         # 检查梯度是否包含NaN
+        #         # NaN
         #         if torch.isnan(grad).any():
         #             print(f"NaN gradient detected in {name}")
         #         return grad
         #     return hook
 
-        # # 注册钩子到模型参数
+        # # 
         # hooks = []
         # for name, param in model.named_parameters():
         #     if param.requires_grad:
         #         hook = param.register_hook(hook_fn(name))
         #         hooks.append(hook)
         #################################################
-        #         # valid_atoms = node_mask.squeeze() > 0  # 假设掩码中>0表示有效原子
-        # # x_mean = (x * node_mask).sum(dim=0) / valid_atoms.sum()  # 只对有效原子求均值
-        # # print(f"原始数据均值: {x_mean}")
+        #         # valid_atoms = node_mask.squeeze() > 0  # >0
+        # # x_mean = (x * node_mask).sum(dim=0) / valid_atoms.sum()  # 
+        # # print(f": {x_mean}")
 
-        # # 应用旋转
+        # # 
         # # visualize_molecule(x.view(bs, n_nodes, 3), node_mask.view(bs, n_nodes, 1), batch_index=0)
         # # rot = self.random_rotation_matrix_3d()
         # rot = self.random_rotation_matrices_3d(bs) 
-        # # angle = math.pi/4  # 45度
+        # # angle = math.pi/4  # 45
         # # rot = torch.tensor([
         # #     [1.0, 0.0, 0.0],
         # #     [0.0, math.cos(angle), -math.sin(angle)],
@@ -134,7 +134,7 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         # optim_egnn.step()
 
         ############# gradient check ##################
-        # 获取并打印所有 EGNN 参数的梯度
+        #  EGNN 
         # print("=== EGNN Gradients ===")
         # for name, param in model.dynamics.egnn.named_parameters():
         #     if param.grad is not None:
@@ -142,7 +142,7 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         #     else:
         #         print(f"{name}: None (No gradient)")
 
-        # # 获取并打印所有 DIT 参数的梯度
+        # #  DIT 
         # print("=== DIT Gradients ===")
         # for name, param in model.dynamics.model.named_parameters():
         #     if param.grad is not None:

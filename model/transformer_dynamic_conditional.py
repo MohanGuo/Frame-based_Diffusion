@@ -205,7 +205,7 @@ class TransformerDynamics_2(nn.Module):
         ################# if transform back #####################
         x_final_equivariant = torch.bmm(x_final.unsqueeze(1), pose).squeeze(1)
         # vel = (x_final_equivariant) * node_mask
-        x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)  # 恢复bs维度
+        x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)
         x_final_equivariant = remove_mean_with_mask(x_final_equivariant, node_mask)
         vel = (x_final_equivariant)
         # vel = x_final.view(bs, n_nodes, -1)
@@ -274,7 +274,7 @@ def compute_local_global_distances(local_frames, global_frames):
     ).reshape(bs, n_nodes, 3, 3)
 
     S = relative_rotations - relative_rotations.transpose(-2, -1)
-    v = torch.stack([S[...,2,1], S[...,0,2], S[...,1,0]], dim=-1)  # 2*sinθ * 轴
+    v = torch.stack([S[...,2,1], S[...,0,2], S[...,1,0]], dim=-1)  # 2*sinθ * axis
     sin_term = 0.5 * torch.linalg.norm(v, dim=-1)
     cos_term = (torch.diagonal(relative_rotations, dim1=-2, dim2=-1).sum(-1) - 1) / 2
     eps = 1e-8

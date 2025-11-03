@@ -99,10 +99,8 @@ class EGNN_VAE(nn.Module):
         'batch': torch.arange(bs, device=self.device).repeat_interleave(n_nodes)
         }
         batch_obj = SimpleNamespace(**batch_dict)
-        # 调用 VAE
         out, encoded_batch = self.vae(batch_obj, use_mean=use_mean)
         
-        # 处理 VAE 输出
         x_final = out['x']  # [bs*n_nodes, 3]
         h_final = out['h']  # [bs*n_nodes, h_dim]
         # print(f"x_final: {x_final.shape}")    
