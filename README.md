@@ -1,84 +1,163 @@
-# EDM: E(3) Equivariant Diffusion Model for Molecule Generation in 3D.
+# 🧬 Frame-based Equivariant Diffusion Models for 3D Molecular Generation
 
-<img src="equivariant_diffusion/overview.png" width="400">
+Official implementation of the paper:  
 
-Official code release for the paper Equivariant Diffusion for Molecule Generation in 3D.
+📄 **[Frame-based Equivariant Diffusion Models for 3D Molecular Generation]([https://arxiv.org/abs/XXXX.XXXXX](https://arxiv.org/abs/2509.19506))** 
+
+*(arXiv preprint, 2025)*
 
 **If** you want to set-up a rdkit environment, it may be easiest to install conda and run:
 ``conda create -c conda-forge -n my-rdkit-env rdkit``
 
 and then install the other required packages from there. The code should still run without rdkit installed though.
 
+## 🧠 Overview
 
-### Training the EDM:
+This repository provides implementations of **Frame-based Diffusion Models** for molecular generation,  
+including three coordinated variants developed during the research:
 
-```python main_qm9.py --n_epochs 3000 --exp_name edm_qm9 --n_stability_samples 1000 --diffusion_noise_schedule polynomial_2 --diffusion_noise_precision 1e-5 --diffusion_steps 1000 --diffusion_loss_type l2 --batch_size 64 --nf 256 --n_layers 9 --lr 1e-4 --normalize_factors [1,4,10] --test_epochs 20 --ema_decay 0.9999```
+| Branch | Variant | Description |
+|:-------|:---------|:-------------|
+| **main** | **GFD** | Global Frame Diffusion Model |
+| **LFD** | Local Frame Diffusion | Local frame-based model variant |
+| **IFD** | Invariant Frame Diffusion | Invariant frame-based model variant |
+
+Each variant can be accessed by switching to its corresponding branch with different backbone selections.
+
+## GFD
+
+### Train GFD with EdgeDiT on QM9
+To train GFD with EdgeDiT:
+
+```bash
+python main_qm9.py \
+--n_epochs 5000 \
+--exp_name ${EXP_NAME} \
+--n_stability_samples 1000 \
+--diffusion_noise_schedule polynomial_2 \
+--diffusion_noise_precision 1e-5 \
+--diffusion_steps 1000 \
+--diffusion_loss_type l2 \
+--batch_size 256 \
+--nf 256 \
+--n_layers 9 \
+--lr 2e-4 \
+--normalize_factors [1,4,10] \
+--test_epochs 20 \
+--ema_decay 0.9999 \
+--datadir $DATA_DIR \
+--inte_model transformer_dit \
+--xh_hidden_size 184 --K 184 \
+--hidden_size 384 --depth 12 --num_heads 6 --mlp_ratio 4.0 --mlp_dropout 0.0 \
+```
+
+To train GFD* with EdgeDiT:
+
+```bash
+python main_qm9.py \
+--n_epochs 5000 \
+--exp_name ${EXP_NAME} \
+--n_stability_samples 1000 \
+--diffusion_noise_schedule polynomial_2 \
+--diffusion_noise_precision 1e-5 \
+--diffusion_steps 1000 \
+--diffusion_loss_type l2 \
+--batch_size 256 \
+--nf 256 \
+--n_layers 9 \
+--lr 1e-4 \
+--normalize_factors [1,4,10] \
+--test_epochs 30 \
+--ema_decay 0.9999 \
+--datadir $DATA_DIR \
+--inte_model transformer_dit \
+--xh_hidden_size 382 --K 382 \
+--hidden_size 768 --depth 12 --num_heads 12 --mlp_ratio 4.0 --mlp_dropout 0.0
+```
+
+### Train GFD + EdgeDiT on GeomDrugs:
+```bash
+python /projects/prjs1459/Thesis/global_framework_pretrain_egnn/main_geom_drugs.py \
+--n_epochs 3000 \
+--exp_name ${EXP_NAME} \
+--n_stability_samples 500 \
+--diffusion_noise_schedule polynomial_2 \
+--diffusion_steps 1000 \
+--diffusion_noise_precision 1e-5 \
+--diffusion_loss_type l2 \
+--batch_size 64 \
+--nf 256 \
+--n_layers 4 \
+--lr 1e-4 \
+--normalize_factors [1,4,10] \
+--test_epochs 1 \
+--ema_decay 0.9999 \
+--normalization_factor 1 \
+--model egnn_dynamics \
+--visualize_every_batch 100000 \
+--inte_model transformer_dit \
+--xh_hidden_size 184 --K 184 \
+--hidden_size 384 --depth 12 --num_heads 6 --mlp_ratio 4.0 --mlp_dropout 0.0
+```
 
 
-A visualization of what happens during training:
 
-<img src="equivariant_diffusion/training.png" width="400">
+## LFD
+
+Train LFD + EdgeDiT with frame alignment loss on QM9:
+
+```bash
+python main_qm9.py \
+--n_epochs 4350 \
+--exp_name ${EXP_NAME} \
+--n_stability_samples 1000 \
+--diffusion_noise_schedule polynomial_2 \
+--diffusion_noise_precision 1e-5 \
+--diffusion_steps 1000 \
+--diffusion_loss_type l2 \
+--batch_size 256 \
+--nf 256 \
+--n_layers 9 \
+--lr 2e-4 \
+--normalize_factors [1,4,10] \
+--test_epochs 20 \
+--ema_decay 0.9999 \
+--datadir $TMPDIR \
+--inte_model transformer_dit \
+--lambda_frame 0.1
+```
+
+## IFD
+Train IFD + EdgeDiT on QM9:
+```bash
+python main_qm9.py \
+--n_epochs 5000 \
+--exp_name ${EXP_NAME} \
+--n_stability_samples 1000 \
+--diffusion_noise_schedule polynomial_2 \
+--diffusion_noise_precision 1e-5 \
+--diffusion_steps 1000 \
+--diffusion_loss_type l2 \
+--batch_size 256 \
+--nf 256 \
+--n_layers 9 \
+--lr 2e-4 \
+--normalize_factors [1,4,10] \
+--test_epochs 20 \
+--ema_decay 0.9999 \
+--datadir $TMPDIR
+```
 
 
-### After training
+
+## After training
 
 To analyze the sample quality of molecules
 
-```python eval_analyze.py --model_path outputs/edm_qm9 --n_samples 10_000```
+```python eval_analyze.py --model_path outputs --n_samples 10_000```
 
 To visualize some molecules
 
-```python eval_sample.py --model_path outputs/edm_qm9 --n_samples 10_000```
-
-
-
-
-
-### For GEOM-Drugs
-
-First follow the intructions at data/geom/README.md to set up the data.
-
-Training
-```python main_geom_drugs.py --n_epochs 3000 --exp_name edm_geom_drugs --n_stability_samples 500 --diffusion_noise_schedule polynomial_2 --diffusion_steps 1000 --diffusion_noise_precision 1e-5 --diffusion_loss_type l2 --batch_size 64 --nf 256 --n_layers 4 --lr 1e-4 --normalize_factors [1,4,10] --test_epochs 1 --ema_decay 0.9999 --normalization_factor 1 --model egnn_dynamics --visualize_every_batch 10000```
-
-
-Analyze
-
-```python eval_analyze.py --model_path outputs/edm_geom_drugs --n_samples 10_000```
-
-Sample
-
-```python eval_sample.py --model_path outputs/edm_geom_drugs```
-
-
-Small note: The GPUs we used for these experiment were pretty large. If the memory does not fit, try running at a smaller size. The main reason is that the EGNN runs with fully connected message passing, which becomes very memory intensive.
-
-### For Conditional Generation
-
-#### Train a Conditional EDM
-
-```python main_qm9.py --exp_name exp_cond_alpha  --model egnn_dynamics --lr 1e-4  --nf 192 --n_layers 9 --save_model True --diffusion_steps 1000 --sin_embedding False --n_epochs 3000 --n_stability_samples 500 --diffusion_noise_schedule polynomial_2 --diffusion_noise_precision 1e-5 --dequantization deterministic --include_charges False --diffusion_loss_type l2 --batch_size 64 --normalize_factors [1,8,1] --conditioning alpha --dataset qm9_second_half```
-
-The argument `--conditioning alpha` can be set to any of the following properties: `alpha`, `gap`, `homo`, `lumo`, `mu` `Cv`. The same applies to the following commands that also depend on alpha.
-
-#### Generate samples for different property values
-
-```python eval_conditional_qm9.py --generators_path outputs/exp_cond_alpha --property alpha --n_sweeps 10 --task qualitative```
-
-You can set `--generators_path` arguments to `outputs/exp_35_conditional_nf192_9l_alpha` to use our pre-trained model on alpha.
-
-
-#### Train a property classifier network 
-```cd qm9/property_prediction```  
-```python main_qm9_prop.py --num_workers 2 --lr 5e-4 --property alpha --exp_name exp_class_alpha --model_name egnn```
-
-Additionally, you can change the argument `--model_name egnn` by `--model_name numnodes` to train a classifier baseline that classifies only based on the number of nodes.
-
-#### Evaluate the property classifier on EDM
-Evaluate the trained property classifier on the samples generated by the trained EDM model
-
-```python eval_conditional_qm9.py --generators_path outputs/exp_cond_alpha --classifiers_path qm9/property_prediction/outputs/exp_class_alpha --property alpha  --iterations 100  --batch_size 100 --task edm```
-
-To use a pre-trained generator and classifier model for alpha you can use the following arguments: `--generators_path outputs/exp_35_conditional_nf192_9l_alpha` and `--classifiers_path qm9/property_prediction/outputs/exp_class_alpha_pretrained`
+```python eval_sample.py --model_path outputs --n_samples 10_000```
 
 
