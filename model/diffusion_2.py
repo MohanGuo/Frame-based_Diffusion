@@ -2,7 +2,7 @@ from equivariant_diffusion import utils
 import numpy as np
 import math
 import torch
-from model.transformer_dynamic import TransformerDynamics_2
+from model.transformer_dynamic_conditional import TransformerDynamics_2
 from torch.nn import functional as F
 from equivariant_diffusion import utils as diffusion_utils
 from equivariant_diffusion.utils import assert_mean_zero_with_mask, remove_mean_with_mask,\
@@ -301,8 +301,8 @@ class EnVariationalDiffusion_2(torch.nn.Module):
                 f'large with sigma_0 {sigma_0:.5f} and '
                 f'1 / norm_value = {1. / max_norm_value}')
 
-    def phi(self, x, t, node_mask, edge_mask, context):
-        net_out = self.dynamics._forward(t, x, node_mask, edge_mask, context)
+    def phi(self, x, t, node_mask, edge_mask, context, edges=None):
+        net_out = self.dynamics._forward(t, x, node_mask, edge_mask, context, edges)
 
         return net_out
 
@@ -565,7 +565,7 @@ class EnVariationalDiffusion_2(torch.nn.Module):
 
         return log_p_xh_given_z
 
-    def compute_loss(self, x, h, node_mask, edge_mask, context, t0_always):
+    def compute_loss(self, x, h, node_mask, edge_mask, context, t0_always, edges=None):
         """Computes an estimator for the variational lower bound, or the simple loss (MSE)."""
 
         # This part is about whether to include loss term 0 always.
@@ -612,7 +612,7 @@ class EnVariationalDiffusion_2(torch.nn.Module):
         # diffusion_utils.assert_mean_zero_with_mask(z_t[:, :, :self.n_dims], node_mask)
 
         # Neural net prediction.
-        net_out = self.phi(z_t, t, node_mask, edge_mask, context)
+        net_out = self.phi(z_t, t, node_mask, edge_mask, context, edges)
         # print(f"Shape of net_out: {net_out}")
 
         # Compute the error.
@@ -654,7 +654,7 @@ class EnVariationalDiffusion_2(torch.nn.Module):
                 n_samples=x.size(0), n_nodes=x.size(1), node_mask=node_mask)
             z_0 = alpha_0 * xh + sigma_0 * eps_0
 
-            net_out = self.phi(z_0, t_zeros, node_mask, edge_mask, context)
+            net_out = self.phi(z_0, t_zeros, node_mask, edge_mask, context, edges)
 
             loss_term_0 = -self.log_pxh_given_z0_without_constants(
                 x, h, z_0, gamma_0, eps_0, net_out, node_mask, egnn_f=None)
@@ -707,7 +707,7 @@ class EnVariationalDiffusion_2(torch.nn.Module):
         return loss, {'t': t_int.squeeze(), 'loss_t': loss.squeeze(),
                       'error': error.squeeze()}
 
-    def forward(self, x, h, node_mask=None, edge_mask=None, context=None):
+    def forward(self, x, h, node_mask=None, edge_mask=None, context=None, edges=None):
         """
         Computes the loss (type l2 or NLL) if training. And if eval then always computes NLL.
         """
@@ -722,10 +722,10 @@ class EnVariationalDiffusion_2(torch.nn.Module):
 
         if self.training:
             # Only 1 forward pass when t0_always is False.
-            loss, loss_dict = self.compute_loss(x, h, node_mask, edge_mask, context, t0_always=False)
+            loss, loss_dict = self.compute_loss(x, h, node_mask, edge_mask, context, t0_always=False, edges=edges)
         else:
             # Less variance in the estimator, costs two forward passes.
-            loss, loss_dict = self.compute_loss(x, h, node_mask, edge_mask, context, t0_always=True)
+            loss, loss_dict = self.compute_loss(x, h, node_mask, edge_mask, context, t0_always=True, edges=edges)
 
         neg_log_pxh = loss
 

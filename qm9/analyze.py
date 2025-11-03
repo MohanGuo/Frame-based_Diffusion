@@ -4,6 +4,7 @@ try:
     use_rdkit = True
 except ModuleNotFoundError:
     use_rdkit = False
+use_rdkit = False
 import qm9.dataset as dataset
 import torch
 import matplotlib

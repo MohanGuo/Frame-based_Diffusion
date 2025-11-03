@@ -11,7 +11,7 @@ from configs.datasets_config import get_dataset_info
 # from data.dataset import QM9Wrapper
 from os.path import join
 from qm9 import dataset
-from models import get_optim, get_diffusion, get_egnn
+from models import get_optim, get_diffusion
 # from model.diffusion import EnVariationalDiffusion
 from model.diffusion_2 import EnVariationalDiffusion_2
 from equivariant_diffusion.utils import assert_correctly_masked
@@ -31,6 +31,7 @@ parser = argparse.ArgumentParser(description='E3Diffusion')
 #New Params
 # parser.add_argument('--train_egnn', action='store_false', help='Train EGNN')
 # parser.add_argument('--train_diffusion', action='store_true', help='Train Diffusion')
+parser.add_argument('--fix_egnn', action='store_true', help='Use pretrained egnn')
 parser.add_argument('--use_pretrain', action='store_true', help='Use pretrained egnn')
 parser.add_argument('--pretrained_model_path', type=str, help='Use pretrained egnn')
 
@@ -214,20 +215,22 @@ args.context_node_nf = context_node_nf
 # if args.train_egnn:
 #     model, nodes_dist, prop_dist = get_egnn(args, device, dataset_info, dataloaders['train'])
 # elif args.train_diffusion:
-model, nodes_dist, prop_dist = get_diffusion(args, device, dataset_info, dataloaders['train'])
+egnn, model, nodes_dist, prop_dist = get_diffusion(args, device, dataset_info, dataloaders['train'])
 
 if prop_dist is not None:
     prop_dist.set_normalizer(property_norms)
 model = model.to(device)
-optim = get_optim(args, model)
+
+if not args.fix_egnn:
+    optim = get_optim(args, model, egnn)
+else:
+    optim = get_optim(args, model)
 # print(model)
 
-# egnn.to(device)
+egnn.to(device)
 # # egnn.eval()
 # optim_egnn = get_optim(args, egnn)
 # # egnn.eval()
-egnn = None
-optim_egnn = None
 
 gradnorm_queue = utils.Queue()
 gradnorm_queue.add(3000)  # Add large value that will be flushed.
@@ -275,7 +278,7 @@ def main():
         train_epoch(args=args, loader=dataloaders['train'], epoch=epoch, model=model, model_dp=model_dp,
                     model_ema=model_ema, ema=ema, device=device, dtype=dtype, property_norms=property_norms,
                     nodes_dist=nodes_dist, dataset_info=dataset_info,
-                    gradnorm_queue=gradnorm_queue, optim=optim, optim_egnn=optim_egnn, prop_dist=prop_dist, egnn=egnn)
+                    gradnorm_queue=gradnorm_queue, optim=optim, prop_dist=prop_dist, egnn=egnn)
         print(f"Epoch took {time.time() - start_epoch:.1f} seconds.")
 
         if epoch % args.test_epochs == 0:

@@ -11,8 +11,21 @@ from qm9 import losses
 import time
 import torch
 
+def preprocess_inv(egnn, x, h, node_mask, edge_mask, bs, n_nodes, dims, n_dims, device):
 
-def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dtype, property_norms, optim, optim_egnn,
+    # edges = self.get_adj_matrix(n_nodes, bs, device)
+    # edges = [x.to(device) for x in edges]
+    # assert_mean_zero_with_mask(x, node_mask)
+    # print(f"edge_mask: {edge_mask.shape}")
+    output, edges, pose = egnn._forward(h, x, node_mask, edge_mask, context=None, bs=bs, n_nodes=n_nodes, dims=dims)
+    x_invariant = output[..., :n_dims]
+    assert_mean_zero_with_mask(x_invariant, node_mask.view(bs, n_nodes, 1))
+    # x_invariant = x_invariant.view(bs*n_nodes, -1)
+    # assert_mean_zero_with_mask(x_invariant, node_mask)
+
+    return x_invariant, edges
+
+def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dtype, property_norms, optim,
                 nodes_dist, gradnorm_queue, dataset_info, prop_dist, egnn):
     model_dp.train()
     model.train()
@@ -45,40 +58,38 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
 
         h = {'categorical': one_hot, 'integer': charges}
 
-        if len(args.conditioning) > 0:
-            context = qm9utils.prepare_context(args.conditioning, data, property_norms).to(device, dtype)
-            assert_correctly_masked(context, node_mask)
-        else:
-            context = None
-
-        # # MG: pass egnn to get invariant coordinates
-        # xh = torch.cat([x, h['categorical'], h['integer']], dim=2)
-        # egnn_f = egnn._forward(xh, node_mask, edge_mask, context=None)
-        # print(f"Shape of egnn_f: {egnn_f.shape}")
-        # x_egnn_f = egnn_f[:, :3, :3]
-        # print(f"Shape of x_egnn_f: {x_egnn_f.shape}")
-        # # TODO: test singular matrix
-        # x_egnn_f_inverse = torch.pinverse(x_egnn_f)
-        # x_invariant = torch.matmul(x, x_egnn_f_inverse)
-        # x_invariant =remove_mean_with_mask(x_invariant, node_mask)
+        ######### Invariant representation ###################
+        bs, n_nodes, n_dims = x.shape
+        h_tensor = torch.cat([one_hot, charges], dim=-1)
+        _, _, h_dims = h_tensor.shape
+        dims = n_dims + h_dims
+        x_egnn = x.clone().view(bs*n_nodes, -1)
+        h_egnn = h_tensor.clone().view(bs*n_nodes, -1)
+        node_mask_egnn = node_mask.clone().view(bs*n_nodes, -1)
+        edge_mask_egnn = edge_mask.clone().view(bs*n_nodes*n_nodes, -1)
+        x_inv, edges = preprocess_inv(egnn, x_egnn, h_egnn, node_mask_egnn, edge_mask_egnn, bs, n_nodes, dims, n_dims, device)
 
         ############# gradient check #####################
-        # # 创建一个梯度监控字典
+        # # 
         # gradients = {}
 
-        # # 为每个参数注册梯度钩子
+        # # 
         # def hook_fn(name):
         #     def hook(grad):
         #         gradients[name] = grad.clone()
-        #         # 检查梯度是否包含NaN
+        #         # NaN
         #         if torch.isnan(grad).any():
         #             print(f"NaN gradient detected in {name}")
         #         return grad
         #     return hook
 
-        # # 注册钩子到模型参数
+        # # 
         # hooks = []
         # for name, param in model.named_parameters():
+        #     if param.requires_grad:
+        #         hook = param.register_hook(hook_fn(name))
+        #         hooks.append(hook)
+        # for name, param in egnn.named_parameters():
         #     if param.requires_grad:
         #         hook = param.register_hook(hook_fn(name))
         #         hooks.append(hook)
@@ -90,8 +101,9 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         # optim_egnn.zero_grad()
 
         # transform batch through flow
+        context=None
         nll, reg_term, mean_abs_z = losses.compute_loss_and_nll(args, model_dp, nodes_dist,
-                                                                x, h, node_mask, edge_mask, context)
+                                                                x_inv, h, node_mask, edge_mask, context, edges)
         # standard nll from forward KL
         loss = nll + args.ode_regularization * reg_term
         loss.backward()
@@ -188,18 +200,20 @@ def test(args, loader, epoch, eval_model, device, dtype, property_norms, nodes_d
                 context = None
             
             # MG EGNN
-            # xh = torch.cat([x, h['categorical'], h['integer']], dim=2)
-            # egnn_f = egnn._forward(xh, node_mask, edge_mask, context=None)
-            # print(f"Shape of egnn_f: {egnn_f.shape}")
-            # x_egnn_f = egnn_f[:, :3, :3]
-            # print(f"Shape of x_egnn_f: {x_egnn_f.shape}")
-            # x_egnn_f_inverse = torch.pinverse(x_egnn_f)
-            # x_invariant = torch.matmul(x, x_egnn_f_inverse)
-            # x_invariant =remove_mean_with_mask(x_invariant, node_mask)
+            bs, n_nodes, n_dims = x.shape
+            h_tensor = torch.cat([one_hot, charges], dim=-1)
+            _, _, h_dims = h_tensor.shape
+            dims = n_dims + h_dims
+            x_egnn = x.clone().view(bs*n_nodes, -1)
+            h_egnn = h_tensor.clone().view(bs*n_nodes, -1)
+            node_mask_egnn = node_mask.clone().view(bs*n_nodes, -1)
+            edge_mask_egnn = edge_mask.clone().view(bs*n_nodes*n_nodes, -1)
+            x_inv, edges = preprocess_inv(egnn, x_egnn, h_egnn, node_mask_egnn, edge_mask_egnn, bs, n_nodes, dims, n_dims, device)
+
 
             # transform batch through flow
             nll, _, _ = losses.compute_loss_and_nll(args, eval_model, nodes_dist, x, h,
-                                                    node_mask, edge_mask, context)
+                                                    node_mask, edge_mask, context, edges)
             # standard nll from forward KL
 
             nll_epoch += nll.item() * batch_size

@@ -2,7 +2,8 @@ import torch
 from torch.distributions.categorical import Categorical
 
 import numpy as np
-from model.transformer_dynamic import TransformerDynamics_2
+# from model.transformer_dynamic import TransformerDynamics_2
+from model.transformer_dynamic_conditional import TransformerDynamics_2 as TransformerDynamics_DiT
 # from model.transformer_dynamic_baseline_transformer import TransformerDynamics_2
 # from model.transformer_dynamic_dit import TransformerDynamics_2
 # from model.diffusion import EnVariationalDiffusion
@@ -35,96 +36,61 @@ def get_diffusion(args, device, dataset_info, dataloader_train):
                  n_dims=3, device=device, hidden_nf=args.nf,
                  act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
                 #  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
-                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'，
+                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'
                 num_vectors=7, num_vectors_out=2
                  )
-    if args.use_pretrain:
-        pretrained_state_dict = torch.load(args.pretrained_model_path, map_location=device)
-        # 提取EGNN相关参数
-        if 'model_state_dict' in pretrained_state_dict:
-            # 由于EGNN是作为组件传入EGNN_VAE的，所以参数前缀很可能是'egnn.'
-            egnn_prefix = 'egnn.'
-            
-            # 提取EGNN参数
-            egnn_state_dict = {}
-            for key, value in pretrained_state_dict['model_state_dict'].items():
-                if key.startswith(egnn_prefix):
-                    # 去除前缀
-                    new_key = key[len(egnn_prefix):]
-                    egnn_state_dict[new_key] = value
-            
-            if len(egnn_state_dict) > 0:
-                print(f"Found {len(egnn_state_dict)} EGNN parameters")
+    
+    if args.fix_egnn:
+        if args.use_pretrain:
+            pretrained_state_dict = torch.load(args.pretrained_model_path, map_location=device)
+            if 'model_state_dict' in pretrained_state_dict:
+                egnn_prefix = 'egnn.'
                 
-                # 尝试加载参数
-                try:
-                    missing_keys, unexpected_keys = egnn.load_state_dict(egnn_state_dict, strict=False)
+                egnn_state_dict = {}
+                for key, value in pretrained_state_dict['model_state_dict'].items():
+                    if key.startswith(egnn_prefix):
+                        new_key = key[len(egnn_prefix):]
+                        egnn_state_dict[new_key] = value
+                
+                if len(egnn_state_dict) > 0:
+                    print(f"Found {len(egnn_state_dict)} EGNN parameters")
                     
-                    if missing_keys:
-                        print(f"Warning: Missing keys when loading EGNN: {missing_keys}")
-                    if unexpected_keys:
-                        print(f"Warning: Unexpected keys when loading EGNN: {unexpected_keys}")
+                    try:
+                        missing_keys, unexpected_keys = egnn.load_state_dict(egnn_state_dict, strict=False)
                         
-                    print("Successfully loaded pretrained EGNN parameters")
-                except Exception as e:
-                    print(f"Error loading EGNN parameters: {e}")
+                        if missing_keys:
+                            print(f"Warning: Missing keys when loading EGNN: {missing_keys}")
+                        if unexpected_keys:
+                            print(f"Warning: Unexpected keys when loading EGNN: {unexpected_keys}")
+                            
+                        print("Successfully loaded pretrained EGNN parameters")
+                    except Exception as e:
+                        print(f"Error loading EGNN parameters: {e}")
+                else:
+                    print("No EGNN parameters found with prefix 'egnn.'")
+                    
+                    print("Available keys in model_state_dict:")
+                    for key in list(pretrained_state_dict['model_state_dict'].keys())[:20]:
+                        print(f"  {key}")
             else:
-                print("No EGNN parameters found with prefix 'egnn.'")
-                
-                # 如果没找到，尝试打印所有键名以检查实际的前缀
-                print("Available keys in model_state_dict:")
-                for key in list(pretrained_state_dict['model_state_dict'].keys())[:20]:  # 只打印前20个键以避免过多输出
-                    print(f"  {key}")
-        else:
-            print("pretrained_state_dict does not contain 'model_state_dict' key")
-            print(f"Available keys: {pretrained_state_dict.keys()}")
+                print("pretrained_state_dict does not contain 'model_state_dict' key")
+                print(f"Available keys: {pretrained_state_dict.keys()}")
 
-    for param in egnn.parameters():
-        param.requires_grad = False
+        for param in egnn.parameters():
+            param.requires_grad = False
     # print(f"Shape of dynamics_in_node_nf: {dynamics_in_node_nf}")
     #For DiT
     # dynamics_in_node_nf = in_node_nf
     # print(f"dynamics_in_node_nf: {dynamics_in_node_nf}")
-    net_dynamics = TransformerDynamics_2(args=args,
-        egnn=egnn,
+    net_dynamics = TransformerDynamics_DiT(args=args,
+        # egnn=egnn,
         in_node_nf=dynamics_in_node_nf, context_node_nf=args.context_node_nf,
         n_dims=3, device=device, hidden_nf=args.nf,
         n_heads=args.n_heads,
         n_layers=args.n_layers,
         condition_time=args.condition_time
-        # in_node_nf=in_node_nf, context_node_nf=args.context_node_nf,
-        # n_dims=3, device=device, hidden_nf=args.nf,
-        # act_fn=torch.nn.SiLU(), 
-        # n_layers=args.n_layers,
-        # attention=args.attention, 
-        # tanh=args.tanh, mode=args.model, 
-        # norm_constant=args.norm_constant,
-        # inv_sublayers=args.inv_sublayers, sin_embedding=args.sin_embedding,
-        # normalization_factor=args.normalization_factor, aggregation_method=args.aggregation_method
         )
 
-    # EGNN
-    # egnn = EGNN_dynamics_QM9(
-    #     in_node_nf=in_node_nf, context_node_nf=args.context_node_nf,
-    #     n_dims=3, device=device, hidden_nf=args.nf,
-    #     act_fn=torch.nn.SiLU(), n_layers=args.n_layers,
-    #     attention=args.attention, tanh=args.tanh, mode=args.model, norm_constant=args.norm_constant,
-    #     inv_sublayers=args.inv_sublayers, sin_embedding=args.sin_embedding,
-    #     normalization_factor=args.normalization_factor, aggregation_method=args.aggregation_method)
-    # egnn = EGNN_dynamics_QM9_MC(in_node_nf=in_node_nf, context_node_nf=args.context_node_nf,
-    #              n_dims=3, device=device, hidden_nf=args.nf,
-    #              act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
-    #             #  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
-    #             #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'，
-    #             num_vectors=7, num_vectors_out=3
-    #              )
-    # egnn.eval()
-#    egnn = EGNN_dynamics_QM9_MC(in_node_nf=in_node_nf - 1, context_node_nf=args.context_node_nf,
-#                  n_dims=3, device=device, hidden_nf=args.nf,
-#                  act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
-#                 num_vectors=7, num_vectors_out=2
-#                  )
-    
     if args.probabilistic_model == 'diffusion':
         vdm = EnVariationalDiffusion_2(
             dynamics=net_dynamics,
@@ -139,40 +105,10 @@ def get_diffusion(args, device, dataset_info, dataloader_train):
             egnn=None
             )
 
-        return vdm, nodes_dist, prop_dist
+        return egnn, vdm, nodes_dist, prop_dist
 
     else:
         raise ValueError(args.probabilistic_model)
-
-def get_egnn(args, device, dataset_info, dataloader_train):
-    histogram = dataset_info['n_nodes']
-    # histogram = {22: 3393, 17: 13025, 23: 4848, 21: 9970, 19: 13832, 20: 9482, 16: 10644, 13: 3060,
-    #             15: 7796, 25: 1506, 18: 13364, 12: 1689, 11: 807, 24: 539, 14: 5136, 26: 48, 7: 16, 10: 362,
-    #             8: 49, 9: 124, 27: 266, 4: 4, 29: 25, 6: 9, 5: 5, 3: 2}
-    # in_node_nf = 5 + (1 if include_charges else 0)
-    in_node_nf = len(dataset_info['atom_decoder']) + int(args.include_charges)
-    nodes_dist = DistributionNodes(histogram)
-
-    prop_dist = None
-    if len(args.conditioning) > 0:
-        prop_dist = DistributionProperty(dataloader_train, args.conditioning)
-
-    if args.condition_time:
-        dynamics_in_node_nf = in_node_nf + 1
-    else:
-        print('Warning: dynamics model is _not_ conditioned on time.')
-        dynamics_in_node_nf = in_node_nf
-    
-    #EGNN
-    egnn = EGNN_dynamics_QM9_MC(in_node_nf=in_node_nf, context_node_nf=args.context_node_nf,
-                 n_dims=3, device=device, hidden_nf=args.nf,
-                 act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
-                #  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
-                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'，
-                num_vectors=7, num_vectors_out=3
-                 )
-    
-    return egnn, nodes_dist, prop_dist
 
 def get_egnn_vae(args, device, dataset_info, dataloader_train):
     histogram = dataset_info['n_nodes']
@@ -198,7 +134,7 @@ def get_egnn_vae(args, device, dataset_info, dataloader_train):
                  n_dims=3, device=device, hidden_nf=args.nf,
                  act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
                 #  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
-                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'，
+                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'
                 num_vectors=7, num_vectors_out=2
                  )
     egnn_vae = EGNN_VAE(args=args,
@@ -211,12 +147,15 @@ def get_egnn_vae(args, device, dataset_info, dataloader_train):
     
     return egnn_vae, nodes_dist, prop_dist
 
-def get_optim(args, generative_model):
-    optim = torch.optim.AdamW(
-        generative_model.parameters(),
-        lr=args.lr, amsgrad=True,
-        weight_decay=1e-12)
-
+def get_optim(args, generative_model, egnn=None):
+    if egnn is not None:
+        parameters = list(egnn.parameters()) + list(generative_model.parameters())
+        optim = torch.optim.AdamW(parameters, lr=args.lr, amsgrad=True, weight_decay=1e-12)
+    else:
+        optim = torch.optim.AdamW(
+            generative_model.parameters(),
+            lr=args.lr, amsgrad=True,
+            weight_decay=1e-12)
     return optim
 
 

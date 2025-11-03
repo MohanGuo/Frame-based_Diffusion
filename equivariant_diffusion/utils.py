@@ -30,7 +30,7 @@ def remove_mean(x):
 
 def remove_mean_with_mask(x, node_mask):
     # print("N values:", node_mask.sum(1))
-    # print("Sum values:", torch.sum(x, dim=1))
+    # print("Sum values:", torch.sum(x, dim=1)) [batch_size, num_nodes, feature_dim]
     masked_max_abs_value = (x * (1 - node_mask)).abs().sum().item()
     assert masked_max_abs_value < 1e-5, f'Error {masked_max_abs_value} too high'
     N = node_mask.sum(1, keepdims=True)

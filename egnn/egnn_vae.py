@@ -94,15 +94,14 @@ class EGNN_VAE(nn.Module):
         batch_dict = {
         'x': x_invariant,
         'h': h,
-        'node_mask': node_mask.reshape(bs, n_nodes).bool(),  # 形状需要是 [bs, max_nodes]
+        'node_mask': node_mask.reshape(bs, n_nodes).bool(),
         'num_atoms': torch.ones(bs, dtype=torch.long, device=self.device) * n_nodes,
         'batch': torch.arange(bs, device=self.device).repeat_interleave(n_nodes)
         }
         batch_obj = SimpleNamespace(**batch_dict)
-        # 调用 VAE
+
         out, encoded_batch = self.vae(batch_obj, use_mean=use_mean)
         
-        # 处理 VAE 输出
         x_final = out['x']  # [bs*n_nodes, 3]
         h_final = out['h']  # [bs*n_nodes, h_dim]
         # print(f"x_final: {x_final.shape}")    

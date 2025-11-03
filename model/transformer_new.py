@@ -133,21 +133,19 @@ class Transformer(nn.Module):
         enc_output = xh_embedded
         if debug:
             for i, layer in enumerate(self.encoder_layers):
-                # 直接调用self_attn来获取注意力分数
                 temp_attn_output, attn_weights = layer.self_attn(
                     enc_output, enc_output, enc_output,
                     attn_mask=attn_mask,
                     need_weights=True
                 )
                 
-                # 打印注意力权重的统计信息
+                # 
                 print(f"Layer {i} attention weights shape: {attn_weights.shape}")
                 print(f"Layer {i} attention weights min/max/mean: {attn_weights.min().item():.4f}/{attn_weights.max().item():.4f}/{attn_weights.mean().item():.4f}")
                 
-                # 继续正常的forward流程
                 enc_output = layer(enc_output, src_mask=attn_mask)
         else:
-            # 正常流程，不需要观察注意力分数
+            # 
             for layer in self.encoder_layers:
                 enc_output = layer(enc_output, src_mask=attn_mask)
 

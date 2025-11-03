@@ -3,8 +3,7 @@ import torch.nn as nn
 import math
 import numpy as np
 # from .transformer import Transformer
-from .transformer_new import Transformer
-from .mpnn import LEquiMPNNQM9
+from .transformer_conditional import DiT
 import sys
 sys.path.append('..')
 from equivariant_diffusion.utils import remove_mean, remove_mean_with_mask, assert_mean_zero_with_mask
@@ -12,15 +11,16 @@ from egnn.models import EGNN_dynamics_QM9_MC
 from egnn.egnn_mc import EGNN as EGNN_mc
 import time
 from torch_geometric.nn import global_mean_pool, global_add_pool
+from sym_nn.utils import GaussianLayer
+EPS = 1e-8
 
 class TransformerDynamics_2(nn.Module):
     def __init__(self, args, in_node_nf, context_node_nf, n_dims, 
                  hidden_nf=64, device='cpu', n_heads=4, 
                  n_layers=4, condition_time=True, debug=False):
-                #  norm_constant=0,
-                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'):
 
         super().__init__()
+        in_node_nf -= 1
         self.in_node_nf = in_node_nf
         self.context_node_nf = context_node_nf
         self.device = device
@@ -29,25 +29,65 @@ class TransformerDynamics_2(nn.Module):
         self.condition_time = condition_time
 
         # self.egnn = egnn
+
         
         self.feature_embedding = nn.Sequential(
             nn.Linear(in_node_nf, hidden_nf),
             nn.SiLU(),
             nn.Linear(hidden_nf, 2)
         )
-        
 
-        self.transformer = Transformer(
-            args=args,
-            in_node_nf=in_node_nf + context_node_nf,
-            device=device,
-            d_model=hidden_nf,
-            num_heads=n_heads,
-            num_layers=n_layers,
-            d_ff=hidden_nf*4,
-            dropout=0.1,
-            edge_dim = 8 #4
-        )
+        # self.transformer = Transformer(
+        #     args=args,
+        #     in_node_nf=in_node_nf + context_node_nf,
+        #     device=device,
+        #     d_model=hidden_nf,
+        #     num_heads=n_heads,
+        #     num_layers=n_layers,
+        #     d_ff=hidden_nf*4,
+        #     dropout=0.1,
+        #     edge_dim = 8 #4
+        # )
+        #DiT init
+        self.gaussian_embedder = GaussianLayer(K=184)
+        xh_hidden_size = 184
+        K = 184
+        hidden_size = 384
+        depth = 12
+        num_heads = 6
+        mlp_ratio = 4.0
+        mlp_dropout = 0.0
+        mlp_type = "swiglu"
+        self.xh_embedder = nn.Linear(n_dims+in_node_nf+context_node_nf, xh_hidden_size)
+        self.pos_embedder = nn.Linear(K, hidden_size-xh_hidden_size)
+
+        self.model = DiT(
+            out_channels=n_dims+in_node_nf+context_node_nf,
+            hidden_size=hidden_size, depth=depth, num_heads=num_heads, 
+            mlp_ratio=mlp_ratio, mlp_dropout=mlp_dropout, mlp_type=mlp_type,
+            use_fused_attn=True, x_emb="identity",
+            edge_dim=8,
+            d_model=hidden_nf)
+
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
+        self.xh_embedder.apply(_basic_init)
+        self.pos_embedder.apply(_basic_init)
+
+    def forward(self, t, xh, node_mask, edge_mask, context=None):
+        raise NotImplementedError
+
+    def wrap_forward(self, node_mask, edge_mask, context):
+        def fwd(time, state):
+            return self._forward(time, state, node_mask, edge_mask, context)
+        return fwd
+
+    def unwrap_forward(self):
+        return self._forward
 
     def _forward(self, t, xh, node_mask, edge_mask, context, edges=None):
         # start_1 = time.time()
@@ -56,34 +96,24 @@ class TransformerDynamics_2(nn.Module):
         if edges==None:
             edges = self.get_adj_matrix(n_nodes, bs, self.device)
             edges = [x.to(self.device) for x in edges]
+
+        x_input =remove_mean_with_mask(xh[..., :self.n_dims], node_mask)
+        x_input = x_input.view(bs*n_nodes, -1)
         
         xh = xh.view(bs*n_nodes, -1)#.clone() * node_mask
-        x = xh[:, 0:self.n_dims].clone().view(bs, n_nodes, -1)
-        x = remove_mean_with_mask(x, node_mask).view(bs*n_nodes, -1)
-        if h_dims == 0:
-            h = torch.ones(bs*n_nodes, 1).to(self.device)
-        else:
-            h = xh[:, self.n_dims:].clone()
+
+        h = xh[:, self.n_dims:].clone()
         
+        h_egnn = h.clone()
+
+        # print(f"x_input: {x_input[0]}")
         node_mask = node_mask.view(bs*n_nodes, 1)
         edge_mask = edge_mask.view(bs*n_nodes*n_nodes, 1)
         
 
-        if self.condition_time:
-            if np.prod(t.size()) == 1:
-                # t is the same for all elements in batch.
-                h_time = torch.empty_like(h[:, 0:1]).fill_(t.item())
-            else:
-                # t is different over the batch dimension.
-                h_time = t.view(bs, 1).repeat(1, n_nodes)
-                h_time = h_time.view(bs * n_nodes, 1)
-            h = torch.cat([h, h_time], dim=1)
-        if context is not None:
-            # We're conditioning, awesome!
-            context = context.view(bs*n_nodes, self.context_node_nf)
-            h = torch.cat([h, context], dim=1)
-
-        radial, coord_diff = coord2diff(x.clone(), edges)
+        ######edge bias#####
+        # x_invariant_edge = x_invariant.view(bs*n_nodes, -1)
+        radial, coord_diff = coord2diff(x_input.clone(), edges)
         coord_diff = coord_diff.view(bs, n_nodes, n_nodes, 3)
         radial = radial.view(bs, n_nodes, n_nodes, 1)
         #add h into edge features
@@ -91,46 +121,47 @@ class TransformerDynamics_2(nn.Module):
         rows, cols = edges
         h_i = h_embedded[rows]
         h_j = h_embedded[cols]
-        # 
         node_edge_features = torch.cat([h_i, h_j], dim=1)
-
         node_features_matrix = node_edge_features.view(bs, n_nodes, n_nodes, -1)
-
-        # #Normalize radial:
-        # radial_mean = radial.mean()
-        # radial_std = radial.std() + 1e-8
-        # radial_normalized = (radial - radial_mean) / radial_std
-
-        # edge_features = torch.cat([radial, transformed_coord], dim=-1)
-        # edge_features = torch.cat([radial_normalized, transformed_coord, node_features_matrix], dim=-1)
         edge_features = torch.cat([radial, coord_diff, node_features_matrix], dim=-1)
-        # edge_features = torch.cat([radial, radial, radial, radial], dim=-1)
-        # print(f"edge_features: {edge_features[0, 0, 1]}")
-        
 
-        # edge_features = None
-        h_final, x_final = self.transformer(h, x, edge_features, node_mask=node_mask, batch_size=bs)
-        # x_final = x_invariant
-        # h_final = h
 
+        ######DiT input#####
+        x = xh[:, 0:self.n_dims].clone()
+        x = x.view(bs, n_nodes, 3)
+        node_mask = node_mask.view(bs, n_nodes, 1)
+        x = remove_mean_with_mask(x, node_mask)
+        N = torch.sum(node_mask, dim=1, keepdims=True)  # [bs, 1, 1]
+        pos_emb = self.gaussian_embedder(x, node_mask)  # [bs, n_nodes, n_nodes, K]
+        pos_emb = torch.sum(self.pos_embedder(pos_emb), dim=-2) / N  # [bs, n_nodes, K]
+        xh = torch.cat([x.clone(), h.view(bs, n_nodes, -1)], dim=-1)
+        # xh = torch.cat([x_input.clone(), h.view(bs, n_nodes, -1)], dim=-1)
+        xh = xh.view(bs, n_nodes, -1)
+        # print(f"xh: {xh.shape}")
+        xh = self.xh_embedder(xh)
+        # print(f"xh: {xh}")
+        xh = node_mask * torch.cat([xh, pos_emb], dim=-1)
+
+        ######DiT##########
+        # print(f"xh: {xh}")
+        xh = node_mask * self.model(t.squeeze(-1), xh, edge_features, node_mask=node_mask, batch_size=bs, n_nodes=n_nodes)
+        # print(f"xh: {xh}")
+        x_final = xh[:, :, :self.n_dims] 
+        h_final = xh[:, :, self.n_dims:]
+        x_final = remove_mean_with_mask(x_final, node_mask)
+        assert_mean_zero_with_mask(x_final, node_mask)
+        # x_final = x_final.view(bs * n_nodes, -1)
+        # h_final = h_final.view(bs * n_nodes, -1)
         
         ################# if transform back #####################
-        vel = (x_final) * node_mask
+        # x_final_equivariant = torch.bmm(x_final.unsqueeze(1), pose).squeeze(1)
+        # # vel = (x_final_equivariant) * node_mask
+        # x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1) #bs
+        # x_final_equivariant = remove_mean_with_mask(x_final_equivariant, node_mask)
+        # vel = (x_final_equivariant)
+        vel = x_final * node_mask
         #########################################################
 
-
-        if context is not None:
-            # Slice off context size:
-            h_final = h_final[:, :-self.context_node_nf]
-
-        # print(f"Shape of h_final in stage 1: {h_final.shape}")
-        if self.condition_time:
-            # Slice off last dimension which represented time.
-            h_final = h_final[:, :-1]
-
-        # print(f"Shape of h_final in stage 2: {h_final.shape}")
-
-        vel = vel.view(bs, n_nodes, -1)
 
         if torch.any(torch.isnan(vel)):
             print('Warning: detected nan, resetting transformer output to zero.')
@@ -148,13 +179,8 @@ class TransformerDynamics_2(nn.Module):
 
         # start_5 = time.time()
         # print(f'One forward took {start_5 - start_1:.2f} seconds')
-        debug = False
-        if h_dims == 0:
-            return vel
-        else:
-            h_final = h_final.view(bs, n_nodes, -1)
-            # print(f"Shape of h_final in stage 3: {h_final.shape}")
-            return torch.cat([vel, h_final], dim=2)
+        h_final = h_final.view(bs, n_nodes, -1)
+        return torch.cat([vel, h_final], dim=2)
 
     def get_adj_matrix(self, n_nodes, batch_size, device):
         if n_nodes in self._edges_dict:

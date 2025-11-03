@@ -1,7 +1,9 @@
 import torch
 # from egnn.models_new import EGNN_dynamics_QM9
 from egnn.models import EGNN_dynamics_QM9_MC
-from egnn.egnn_vae import EGNN_VAE
+# from model.transformer_dynamic_dit import TransformerDynamics_2
+# from model.transformer_dynamic_conditional import TransformerDynamics_2
+from model.transformer_dynamic_conditional import TransformerDynamics_2
 from equivariant_diffusion.utils import assert_mean_zero_with_mask, remove_mean_with_mask,\
     assert_correctly_masked, sample_center_gravity_zero_gaussian_with_mask
 import sys
@@ -30,7 +32,7 @@ def random_rotation_matrices(batch_size, device):
     for _ in range(batch_size):
         # 
         theta = torch.randn(3, device=device)
-        theta = theta / torch.norm(theta)  # 
+        theta = theta / torch.norm(theta)
         
         #  K
         K = torch.zeros((3, 3), device=device)
@@ -42,7 +44,7 @@ def random_rotation_matrices(batch_size, device):
         R = torch.matrix_exp(K)
         rotation_matrices.append(R)
     
-    return torch.stack(rotation_matrices)  
+    return torch.stack(rotation_matrices)
 
 def test_equivariance_with_seed(seed):
     # 
@@ -68,13 +70,13 @@ def test_equivariance_with_seed(seed):
     loader = dataloaders['train']
     dataset_info = get_dataset_info('qm9', False)
 
-    dynamics_in_node_nf = len(dataset_info['atom_decoder']) + int(False)
+    dynamics_in_node_nf = len(dataset_info['atom_decoder']) + int(False) + 1
     context_node_nf = 0
     nf = 128
     n_layers = 8
 
     debug = False
-    egnn = EGNN_dynamics_QM9_MC(in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
+    egnn = EGNN_dynamics_QM9_MC(in_node_nf=dynamics_in_node_nf - 1, context_node_nf=context_node_nf,
                  n_dims=3, device=device, hidden_nf=nf,
                  act_fn=torch.nn.SiLU(), n_layers=3, attention=False,
                 #  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
@@ -82,27 +84,16 @@ def test_equivariance_with_seed(seed):
                 num_vectors=7, num_vectors_out=2
                  )
     
-    if debug:
-        model = EGNN_VAE(
-            args=cfg,
-            egnn=egnn,
-            in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
-            n_dims=3, device=device, hidden_nf=nf,
-            n_heads=8,
-            n_layers=n_layers,
-            condition_time=True,
-            debug=debug
-            )
-    else:
-        model = EGNN_VAE(
-            args=cfg,
-            egnn=egnn,
-            in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
-            n_dims=3, device=device, hidden_nf=nf,
-            n_heads=8,
-            n_layers=n_layers,
-            condition_time=True
-            )
+
+    model = TransformerDynamics_2(
+        args=cfg,
+        egnn=egnn,
+        in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
+        n_dims=3, device=device, hidden_nf=nf,
+        n_heads=8,
+        n_layers=n_layers,
+        condition_time=True
+        )
     
     results = {
         'rotation_invariance_error': 0.0,
@@ -134,7 +125,7 @@ def test_equivariance_with_seed(seed):
             # t = torch.zeros((x.size(0), 1), device=x.device).float()
             # Original output
             visualize_molecule(xh[..., :3], node_mask, batch_index=0, save_path='molecule_1_input.png')
-            out1, _ = model._forward(xh, node_mask, edge_mask, context=None)
+            out1 = model._forward(t, xh, node_mask, edge_mask, context=None)
             visualize_molecule(out1, node_mask, batch_index=0, save_path='molecule_1.png')
             
             # Test rotation equivariance
@@ -155,7 +146,7 @@ def test_equivariance_with_seed(seed):
             xh_rot[..., :3] = torch.bmm(xh[..., :3], rotation_matrices.transpose(1, 2))
 
             visualize_molecule(xh_rot[..., :3], node_mask, batch_index=0, save_path='molecule_2_input.png')
-            out2, _ = model._forward(xh_rot, node_mask, edge_mask, context=None)
+            out2 = model._forward(t, xh_rot, node_mask, edge_mask, context=None)
             out2_unrot = out2.clone()
             visualize_molecule(out2, node_mask, batch_index=0, save_path='molecule_2.png')
             
@@ -296,7 +287,6 @@ def check_mask_correct(variables, node_mask):
             assert_correctly_masked(variable, node_mask)
 
 def test_equivariance_multi_seeds(num_tests=10):
-
     # 
     import random
     import time
@@ -305,7 +295,7 @@ def test_equivariance_multi_seeds(num_tests=10):
     # 
     seeds = [random.randint(1, 100000) for _ in range(num_tests)]
     num_seeds = len(seeds)
-    seeds = [28461]
+    # seeds = [28461]
     
     # 
     all_results = []
@@ -353,6 +343,6 @@ def test_equivariance_multi_seeds(num_tests=10):
 
 if __name__ == "__main__":
     # 
-    num_tests = 10
+    num_tests = 1
     stats, results = test_equivariance_multi_seeds(num_tests)
     

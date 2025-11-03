@@ -15,7 +15,7 @@ class EGNN_dynamics_QM9_MC(nn.Module):
                  n_dims, hidden_nf=64, device='cpu',
                  act_fn=torch.nn.SiLU(), n_layers=4, attention=False,
                 #  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
-                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'，
+                #  inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'
                 num_vectors=7, num_vectors_out=3
                  ):
         super().__init__()
@@ -46,11 +46,13 @@ class EGNN_dynamics_QM9_MC(nn.Module):
         self.context_node_nf = context_node_nf
         self.device = device
         self.n_dims = n_dims
+        self._edges_dict = {}
 
 
-    def _forward(self, h, x, edges, node_mask, edge_mask, context, bs, n_nodes, dims):
+    def _forward(self, h, x, node_mask, edge_mask, context, bs, n_nodes, dims):
         h_dims = dims - self.n_dims
         # print(f"Shape: {h.shape, x.shape, node_mask.shape}")
+        edges = self.get_adj_matrix(n_nodes, bs, self.device)
         h_final, x_final = self.egnn(h, x, edges, edge_attr=None, node_mask=node_mask, edge_mask=edge_mask, n_nodes=n_nodes)
         # x_final: [bs*nodes, dims, channel]
         # print(f"output of egnn: {x_final[0]}")
@@ -66,14 +68,14 @@ class EGNN_dynamics_QM9_MC(nn.Module):
         vel_reshaped = vel.view(bs, n_nodes, 2, -1)  # [bs, n_nodes, channel, 3]
         # print(f"vel_reshaped: {vel_reshaped.shape}")
 
-        # 创建每个分子的掩码
+        # 
         mask_expanded = node_mask.view(bs, n_nodes, 1, 1).expand(-1, -1, vel_reshaped.shape[2], 3)
 
-        # 对每个分子单独计算平均速度
-        vel_sum = (vel_reshaped * mask_expanded).sum(dim=1)  # [bs, channel, 3] - 在每个分子内对节点求和
+        # 
+        vel_sum = (vel_reshaped * mask_expanded).sum(dim=1)  # [bs, channel, 3]
         # vel_sum = (vel_reshaped).sum(dim=1)
-        node_count = mask_expanded[:, :, 0, 0].sum(dim=1, keepdim=True)  # [bs, 1] - 每个分子的有效节点数
-        vel_mean = vel_sum / (node_count.view(bs, 1, 1) + EPS)  # [bs, channel, 3] - 每个分子的平均速度
+        node_count = mask_expanded[:, :, 0, 0].sum(dim=1, keepdim=True)  # [bs, 1]
+        vel_mean = vel_sum / (node_count.view(bs, 1, 1) + EPS)  # [bs, channel, 3]
 
         # print(f"vel_mean: {vel_mean.shape}")
         
@@ -133,7 +135,7 @@ class EGNN_dynamics_QM9_MC(nn.Module):
             return vel
         else:
             h_final = h_final.view(bs, n_nodes, -1)
-            return torch.cat([vel, h_final], dim=2), None, vel_q
+            return torch.cat([vel, h_final], dim=2), edges, vel_q
 
     def get_adj_matrix(self, n_nodes, batch_size, device):
         if n_nodes in self._edges_dict:

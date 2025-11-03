@@ -25,12 +25,12 @@ def random_rotation(x):
     angle_range = np.pi * 2
 
     if n_dims == 3:
-        # 使用轴角法避免万向节锁
+        # 
         axis = torch.randn(bs, 3, device=device)
-        axis = axis / (torch.norm(axis, dim=1, keepdim=True) + 1e-8)  # 单位化
+        axis = axis / (torch.norm(axis, dim=1, keepdim=True) + 1e-8) 
         angles = torch.rand(bs, 1, device=device) * angle_range - np.pi
         
-        # Rodrigues公式生成旋转矩阵
+        # Rodrigues
         K = torch.zeros(bs, 3, 3, device=device)
         K[:, 0, 1] = -axis[:, 2]
         K[:, 0, 2] = axis[:, 1]
@@ -63,7 +63,6 @@ def random_rotation(x):
     return x.contiguous()
 
 def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
-    """增强版分子可视化"""
     coords = x[batch_index].detach().cpu().numpy()
     mask = node_mask[batch_index].squeeze().detach().cpu().numpy()
     valid_mask = mask > 0
@@ -72,18 +71,17 @@ def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
     
-    # 绘制原子（根据Z坐标着色）
     sc = ax.scatter(
         valid_coords[:, 0], valid_coords[:, 1], valid_coords[:, 2],
         c=valid_coords[:, 2], cmap='viridis', s=100, depthshade=True,
         edgecolors='k', linewidth=0.5
     )
     
-    # 添加颜色条
+    # 
     cbar = fig.colorbar(sc, ax=ax, shrink=0.8)
     cbar.set_label('Z Coordinate', rotation=270, labelpad=15)
     
-    # 设置等比例轴
+    # 
     max_range = np.array([
         valid_coords[:,0].max()-valid_coords[:,0].min(), 
         valid_coords[:,1].max()-valid_coords[:,1].min(),
@@ -98,10 +96,10 @@ def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
     ax.set_ylim(mid_y - max_range, mid_y + max_range)
     ax.set_zlim(mid_z - max_range, mid_z + max_range)
     
-    # 设置视角
-    ax.view_init(elev=30, azim=45)  # 固定视角
+    # 
+    ax.view_init(elev=30, azim=45) 
     
-    # 添加连接线（示例：显示所有原子间的连接）
+    # 
     for i in range(len(valid_coords)):
         for j in range(i+1, len(valid_coords)):
             ax.plot(
@@ -117,8 +115,7 @@ def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
 
 
 def test_equivariance_with_seed(seed):
-    """运行单次等变性测试并返回指定的误差指标"""
-    # 设置随机种子
+    # 
     torch.random.manual_seed(seed)
 
     # Model setup
