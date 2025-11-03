@@ -43,6 +43,7 @@ parser.add_argument('--probabilistic_model', type=str, default='diffusion',
 parser.add_argument('--clipping_type', type=str, default="queue")  # default from EDM
 parser.add_argument('--max_grad_norm', type=float, default=1.5)  # NOTE: LEO
 parser.add_argument('--no_edge_features', action='store_true', help='Use edge features')
+parser.add_argument('--lambda_frame', type=float, default=0.01)
 
 
 # Training complexity is O(1) (unaffected), but sampling complexity is O(steps).

@@ -302,9 +302,9 @@ class EnVariationalDiffusion_2(torch.nn.Module):
                 f'1 / norm_value = {1. / max_norm_value}')
 
     def phi(self, x, t, node_mask, edge_mask, context):
-        net_out = self.dynamics._forward(t, x, node_mask, edge_mask, context)
+        net_out, frame_loss = self.dynamics._forward(t, x, node_mask, edge_mask, context)
 
-        return net_out
+        return net_out, frame_loss
 
     def inflate_batch_array(self, array, target):
         """
@@ -473,7 +473,7 @@ class EnVariationalDiffusion_2(torch.nn.Module):
         sigma_x = self.SNR(-0.5 * gamma_0).unsqueeze(1)
 
         # Neural net prediction.
-        net_out = self.phi(z0, zeros, node_mask, edge_mask, context)
+        net_out, frame_loss = self.phi(z0, zeros, node_mask, edge_mask, context)
 
         # net_out = self.phi(z0, zeros, node_mask, edge_mask, context)
 
@@ -565,7 +565,7 @@ class EnVariationalDiffusion_2(torch.nn.Module):
 
         return log_p_xh_given_z
 
-    def compute_loss(self, x, h, node_mask, edge_mask, context, t0_always):
+    def compute_loss(self, x, h, node_mask, edge_mask, context, t0_always, lambda_frame):
         """Computes an estimator for the variational lower bound, or the simple loss (MSE)."""
 
         # This part is about whether to include loss term 0 always.
@@ -612,7 +612,7 @@ class EnVariationalDiffusion_2(torch.nn.Module):
         # diffusion_utils.assert_mean_zero_with_mask(z_t[:, :, :self.n_dims], node_mask)
 
         # Neural net prediction.
-        net_out = self.phi(z_t, t, node_mask, edge_mask, context)
+        net_out, frame_loss = self.phi(z_t, t, node_mask, edge_mask, context)
         # print(f"Shape of net_out: {net_out}")
 
         # Compute the error.
@@ -654,10 +654,10 @@ class EnVariationalDiffusion_2(torch.nn.Module):
                 n_samples=x.size(0), n_nodes=x.size(1), node_mask=node_mask)
             z_0 = alpha_0 * xh + sigma_0 * eps_0
 
-            net_out = self.phi(z_0, t_zeros, node_mask, edge_mask, context)
+            net_out, frame_loss_0 = self.phi(z_0, t_zeros, node_mask, edge_mask, context)
 
             loss_term_0 = -self.log_pxh_given_z0_without_constants(
-                x, h, z_0, gamma_0, eps_0, net_out, node_mask, egnn_f=None)
+                x, h, z_0, gamma_0, eps_0, net_out, node_mask, egnn_f=None) + lambda_frame * frame_loss_0
 
             assert kl_prior.size() == estimator_loss_terms.size()
             assert kl_prior.size() == neg_log_constants.size()
@@ -703,11 +703,14 @@ class EnVariationalDiffusion_2(torch.nn.Module):
             loss = kl_prior + estimator_loss_terms + neg_log_constants
 
         assert len(loss.shape) == 1, f'{loss.shape} has more than only batch dim.'
+        print(f"diffusion loss: {loss}")
+        print(f"frame loss: {lambda_frame * frame_loss}")
+        loss += lambda_frame * frame_loss
 
         return loss, {'t': t_int.squeeze(), 'loss_t': loss.squeeze(),
                       'error': error.squeeze()}
 
-    def forward(self, x, h, node_mask=None, edge_mask=None, context=None):
+    def forward(self, x, h, node_mask=None, edge_mask=None, context=None, lambda_frame=0):
         """
         Computes the loss (type l2 or NLL) if training. And if eval then always computes NLL.
         """
@@ -722,10 +725,10 @@ class EnVariationalDiffusion_2(torch.nn.Module):
 
         if self.training:
             # Only 1 forward pass when t0_always is False.
-            loss, loss_dict = self.compute_loss(x, h, node_mask, edge_mask, context, t0_always=False)
+            loss, loss_dict = self.compute_loss(x, h, node_mask, edge_mask, context, t0_always=False, lambda_frame=lambda_frame)
         else:
             # Less variance in the estimator, costs two forward passes.
-            loss, loss_dict = self.compute_loss(x, h, node_mask, edge_mask, context, t0_always=True)
+            loss, loss_dict = self.compute_loss(x, h, node_mask, edge_mask, context, t0_always=True, lambda_frame=lambda_frame)
 
         neg_log_pxh = loss
 
@@ -764,7 +767,7 @@ class EnVariationalDiffusion_2(torch.nn.Module):
         ##########################################################
 
         # Neural net prediction.
-        eps_t = self.phi(zt, t, node_mask, edge_mask, context)
+        eps_t, frame_loss = self.phi(zt, t, node_mask, edge_mask, context)
 
         #######################MG: transform back to equivariance#################
         # batch_size, num_nodes, _ = eps_t.shape

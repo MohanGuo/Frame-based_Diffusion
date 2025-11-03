@@ -108,6 +108,7 @@ def test_equivariance_with_seed(seed):
             x = data['positions'].to(device, dtype)
             node_mask = data['atom_mask'].to(device, dtype).unsqueeze(2)
             print(f"Shape of node mask: {node_mask.shape}")
+            # Shape of node mask: torch.Size([32, 25, 1])
             edge_mask = data['edge_mask'].to(device, dtype)
             one_hot = data['one_hot'].to(device, dtype)
             charges = data['charges'].to(device, dtype)
@@ -126,8 +127,9 @@ def test_equivariance_with_seed(seed):
             # t = torch.zeros((x.size(0), 1), device=x.device).float()
             # Original output
             visualize_molecule(xh[..., :3], node_mask, batch_index=0, save_path='molecule_1_input.png')
-            out1 = model._forward(t, xh, node_mask, edge_mask, context=None)
-            visualize_molecule(out1, node_mask, batch_index=0, save_path='molecule_1.png')
+            out1, _ = model._forward(t, xh, node_mask, edge_mask, context=None)
+            print(f"out1 shape: {out1.shape}")
+            visualize_molecule(out1[..., :3], node_mask, batch_index=0, save_path='molecule_1.png')
             
             # Test rotation equivariance
             batch_size = x.size(0)  # 32
@@ -147,9 +149,9 @@ def test_equivariance_with_seed(seed):
             xh_rot[..., :3] = torch.bmm(xh[..., :3], rotation_matrices.transpose(1, 2))
 
             visualize_molecule(xh_rot[..., :3], node_mask, batch_index=0, save_path='molecule_2_input.png')
-            out2 = model._forward(t, xh_rot, node_mask, edge_mask, context=None)
+            out2, _ = model._forward(t, xh_rot, node_mask, edge_mask, context=None)
             out2_unrot = out2.clone()
-            visualize_molecule(out2, node_mask, batch_index=0, save_path='molecule_2.png')
+            visualize_molecule(out2[..., :3], node_mask, batch_index=0, save_path='molecule_2.png')
             
             
             ############# Test input invariance ##################

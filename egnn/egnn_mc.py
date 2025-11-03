@@ -72,15 +72,13 @@ class E_GCL(nn.Module):
         #Initialize
         layer = nn.Linear(hidden_coord_nf, num_vectors_in * num_vectors_out, bias=False)
 
-        # 重塑权重以便单独初始化
         weight = layer.weight.data.view(num_vectors_out, num_vectors_in, -1)
         hidden_dim = weight.shape[2]
 
-        # 使用Xavier或Kaiming初始化
         for i in range(num_vectors_out):
-            if i % 2 == 0:  # 偶数索引使用Xavier初始化
+            if i % 2 == 0:
                 nn.init.xavier_normal_(weight[i])
-            else:  # 奇数索引使用Kaiming初始化
+            else:
                 nn.init.kaiming_normal_(weight[i], mode='fan_out', nonlinearity='relu')
 
 
@@ -145,7 +143,7 @@ class E_GCL(nn.Module):
         if self.last_layer:
             # print(f"coord: {coord.shape}")
             coord = coord.mean(dim=2, keepdim=True) + agg * self.coords_weight
-            # coord = coord + agg * self.coords_weight  # 直接累加而非取均值
+            # coord = coord + agg * self.coords_weight
             # coord = coord.mean(dim=2, keepdim=True)
         else:
             coord += agg * self.coords_weight

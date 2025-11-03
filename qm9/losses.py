@@ -20,7 +20,7 @@ def compute_loss_and_nll(args, generative_model, nodes_dist, x, h, node_mask, ed
 
         # Here x is a position tensor, and h is a dictionary with keys
         # 'categorical' and 'integer'.
-        nll = generative_model(x, h, node_mask, edge_mask, context)
+        nll = generative_model(x, h, node_mask, edge_mask, context, lambda_frame=args.lambda_frame)
 
         N = node_mask.squeeze(2).sum(1).long()
 

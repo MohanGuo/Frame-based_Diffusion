@@ -18,36 +18,24 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
-    """
-    简单可视化单个分子的3D结构
-    
-    参数:
-        x: 形状为 [batch_size, n_nodes, 3] 的坐标张量
-        node_mask: 形状为 [batch_size, n_nodes, 1] 的掩码张量
-        batch_index: 要可视化的批次索引
-    """
-    # 获取选定批次的数据
+
     coords = x[batch_index].detach().cpu().numpy()
     mask = node_mask[batch_index].squeeze().detach().cpu().numpy()
     
-    # 只保留有效原子
     valid_mask = mask > 0
     valid_coords = coords[valid_mask]
     
-    # 创建3D图
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection='3d')
     
-    # 绘制点
     ax.scatter(
         valid_coords[:, 0], 
         valid_coords[:, 1], 
         valid_coords[:, 2],
-        s=50,  # 点的大小
-        c='blue'  # 点的颜色
+        s=50,
+        c='blue'
     )
     
-    # 设置轴标签
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
@@ -56,7 +44,7 @@ def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
     plt.tight_layout()
     plt.savefig(save_path)
     plt.close(fig)
-    print(f"图像已保存到 {save_path}")
+    print(f"Save to: {save_path}")
 
 class TransformerDynamics_2(nn.Module):
     def __init__(self, args,in_node_nf, context_node_nf, n_dims, 
@@ -131,51 +119,14 @@ class TransformerDynamics_2(nn.Module):
         
         # self.debug=debug
     
-    # def random_rotation_matrix_3d(self):
-    #     # 随机生成欧拉角
-    #     theta = torch.rand(1) * 2 * torch.pi  # 绕 Z 轴的旋转
-    #     phi = torch.rand(1) * 2 * torch.pi    # 绕 Y 轴的旋转
-    #     psi = torch.rand(1) * 2 * torch.pi    # 绕 X 轴的旋转
-
-    #     # 计算绕 Z 轴的旋转矩阵
-    #     Rz = torch.tensor([
-    #         [torch.cos(theta), -torch.sin(theta), 0],
-    #         [torch.sin(theta), torch.cos(theta), 0],
-    #         [0, 0, 1]
-    #     ], device=self.device).reshape(3, 3)
-
-    #     # 计算绕 Y 轴的旋转矩阵
-    #     Ry = torch.tensor([
-    #         [torch.cos(phi), 0, torch.sin(phi)],
-    #         [0, 1, 0],
-    #         [-torch.sin(phi), 0, torch.cos(phi)]
-    #     ], device=self.device).reshape(3, 3)
-
-    #     # 计算绕 X 轴的旋转矩阵
-    #     Rx = torch.tensor([
-    #         [1, 0, 0],
-    #         [0, torch.cos(psi), -torch.sin(psi)],
-    #         [0, torch.sin(psi), torch.cos(psi)]
-    #     ], device=self.device).reshape(3, 3)
-
-    #     # 组合旋转矩阵
-    #     rotation_matrix = Rz @ Ry @ Rx
-
-    #     return rotation_matrix
 
     def random_rotation_matrices_3d(self, batch_size):
-        """
-        为整个批次生成不同的旋转矩阵
-        返回形状: [batch_size, 3, 3]
-        """
-        # 随机生成轴向量 (batch_size, 3)
+
         axis = torch.randn(batch_size, 3, device=self.device)
-        axis = axis / (torch.norm(axis, dim=1, keepdim=True) + 1e-8)  # 单位化
-        
-        # 随机生成角度 (batch_size, 1)
+        axis = axis / (torch.norm(axis, dim=1, keepdim=True) + 1e-8)
+
         angles = torch.rand(batch_size, 1, device=self.device) * 2 * torch.pi
         
-        # Rodrigues公式（向量化实现）
         K = torch.zeros(batch_size, 3, 3, device=self.device)
         K[:, 0, 1] = -axis[:, 2]
         K[:, 0, 2] = axis[:, 1]
@@ -232,11 +183,10 @@ class TransformerDynamics_2(nn.Module):
             context = context.view(bs*n_nodes, self.context_node_nf)
             h = torch.cat([h, context], dim=1)
         
-        # # valid_atoms = node_mask.squeeze() > 0  # 假设掩码中>0表示有效原子
-        # # x_mean = (x * node_mask).sum(dim=0) / valid_atoms.sum()  # 只对有效原子求均值
-        # # print(f"原始数据均值: {x_mean}")
+        # # valid_atoms = node_mask.squeeze() > 0
+        # # x_mean = (x * node_mask).sum(dim=0) / valid_atoms.sum()
+        # # print(f"Original Mean: {x_mean}")
 
-        # # 应用旋转
         # # visualize_molecule(x.view(bs, n_nodes, 3), node_mask.view(bs, n_nodes, 1), batch_index=0)
         # # rot = self.random_rotation_matrix_3d()
         # rot = self.random_rotation_matrices_3d(bs) 

@@ -130,7 +130,7 @@ class TransformerDynamics_2(nn.Module):
         # # #x_final: [bs*nodes, 3]
         x_final_equivariant = torch.bmm(x_final.unsqueeze(1), pose).squeeze(1)
         # vel = (x_final) * node_mask
-        x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)  # 恢复bs维度
+        x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)
         x_final_equivariant = remove_mean_with_mask(x_final_equivariant, node_mask)
         vel = (x_final_equivariant)
         # vel = x_final.view(bs, n_nodes, -1) 

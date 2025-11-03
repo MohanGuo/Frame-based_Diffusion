@@ -50,30 +50,21 @@ class TransformerDynamics_2(nn.Module):
         # self.xh_embedder = nn.Linear(n_dims+in_node_nf+context_node_nf, xh_hidden_size)
         # self.pos_embedder = nn.Linear(K, hidden_size-xh_hidden_size)
 
-        # 定义共享参数
         self.num_dit_modules = 3
         self.hidden_size = 384
         self.xh_hidden_size = 184
-        K = 184  # 高斯嵌入维度
+        K = 184
         
-        # 删除全局的 self.gaussian_embedder, self.pos_embedder, self.feature_embedding
-        
-        # 为每个 DiT 模块独立定义组件
         self.dit_layers = nn.ModuleList()
         for _ in range(self.num_dit_modules):
-            # === 独立定义每个模块的组件 ===
-            # (1) 高斯嵌入层
             gaussian_embedder = GaussianLayer(K=K)
-            # (2) 位置编码投影层
             pos_embedder = nn.Linear(K, self.hidden_size - self.xh_hidden_size)
-            # (3) 特征嵌入层（用于边特征）
             feature_embedding = nn.Sequential(
                 nn.Linear(in_node_nf, hidden_nf),
                 nn.SiLU(),
                 nn.Linear(hidden_nf, 2)
             )
             xh_embedder = nn.Linear(n_dims+in_node_nf+context_node_nf, xh_hidden_size)
-            # (4) DiT 主模块
             dit = DiT(
                 out_channels=n_dims + in_node_nf + context_node_nf,
                 hidden_size=self.hidden_size,
@@ -88,13 +79,12 @@ class TransformerDynamics_2(nn.Module):
                 d_model=hidden_nf
             )
             
-            # 附加独立组件到 DiT 模块
             dit.gaussian_embedder = gaussian_embedder
             dit.pos_embedder = pos_embedder
             dit.feature_embedding = feature_embedding
             dit.xh_embedder = xh_embedder
             
-            # 初始化权重
+            
             def _basic_init(module):
                 if isinstance(module, nn.Linear):
                     nn.init.xavier_uniform_(module.weight)
@@ -170,42 +160,32 @@ class TransformerDynamics_2(nn.Module):
         # xh = node_mask * torch.cat([xh, pos_emb], dim=-1)
 
         ######DiT##########
-        # 初始 DiT 输入准备
-        # 初始化坐标和原子特征
-        current_coord = x_invariant  # 初始坐标
-        current_h = h.view(bs, n_nodes, -1).clone()  # 原子特征
+        
+        current_coord = x_invariant
+        current_h = h.view(bs, n_nodes, -1).clone()
 
-        # 逐层处理
         for i, dit_layer in enumerate(self.dit_layers):
-            # === 步骤1: 生成当前层的 edge_features 和 pos_emb ===
-            # (1) 计算 edge_features
             x_invariant_edge = current_coord.view(bs * n_nodes, -1)
             radial, coord_diff = coord2diff(x_invariant_edge, edges)
             coord_diff = coord_diff.view(bs, n_nodes, n_nodes, 3)
             radial = radial.view(bs, n_nodes, n_nodes, 1)
-            h_embedded = dit_layer.feature_embedding(current_h.view(bs * n_nodes, -1))  # 使用当前模块的 feature_embedding
+            h_embedded = dit_layer.feature_embedding(current_h.view(bs * n_nodes, -1))
             rows, cols = edges
             h_i = h_embedded[rows]
             h_j = h_embedded[cols]
             node_edge_features = torch.cat([h_i, h_j], dim=1).view(bs, n_nodes, n_nodes, -1)
             edge_features = torch.cat([radial, coord_diff, node_edge_features], dim=-1)
             
-            # (2) 生成 pos_emb
             pos_emb = dit_layer.gaussian_embedder(current_coord, node_mask.view(bs, n_nodes, 1))
             pos_emb = torch.sum(
                 dit_layer.pos_embedder(pos_emb), 
                 dim=-2
             ) / torch.sum(node_mask.view(bs, n_nodes, 1), dim=1, keepdim=True)
 
-            # === 步骤2: 准备输入并处理 ===
-            # (1) 拼接输入特征（坐标 + 原子特征）并通过 xh_embedder
             xh_input = torch.cat([current_coord, current_h], dim=-1)
-            xh_embedded = dit_layer.xh_embedder(xh_input)  # 使用当前模块的 xh_embedder
-            # print(f"xh_embedded: {xh_embedded}")
-            # (2) 拼接位置编码
+            xh_embedded = dit_layer.xh_embedder(xh_input)
             xh_input_full = torch.cat([xh_embedded, pos_emb], dim=-1)
             
-            # (3) DiT处理
             xh_output = node_mask * dit_layer(
                 t.squeeze(-1), 
                 xh_input_full, 
@@ -215,15 +195,11 @@ class TransformerDynamics_2(nn.Module):
                 n_nodes=n_nodes
             )
             
-            # === 步骤3: 更新坐标和特征 ===
-            # (1) 提取新坐标（假设前n_dims维是坐标）
             new_coord = xh_output[:, :, :self.n_dims]
             # new_coord = remove_mean_with_mask(new_coord, node_mask.view(bs, n_nodes, 1))
             
-            # (2) 更新原子特征（剩余维度）
             current_h = xh_output[:, :, self.n_dims:]
             
-            # (3) 传递到下一层
             current_coord = new_coord
             # print(f"current_coord: {current_coord}")
         ####### Output ########
@@ -239,7 +215,7 @@ class TransformerDynamics_2(nn.Module):
         ################# if transform back #####################
         x_final_equivariant = torch.bmm(x_final.unsqueeze(1), pose).squeeze(1)
         # vel = (x_final_equivariant) * node_mask
-        x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)  # 恢复bs维度
+        x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)
         x_final_equivariant = remove_mean_with_mask(x_final_equivariant, node_mask)
         vel = (x_final_equivariant)
         #########################################################

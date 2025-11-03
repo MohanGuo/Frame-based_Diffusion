@@ -83,7 +83,7 @@ class Transformer(nn.Module):
         # attn_mask = self.generate_mask(h, node_mask, batch_size)
         key_padding_mask = None
         if node_mask is not None:
-            # 创建形状为 (batch_size, seq_len) 的 padding 掩码
+            #(batch_size, seq_len): padding
             key_padding_mask = ~(node_mask.bool().view(batch_size, n_nodes))
 
         

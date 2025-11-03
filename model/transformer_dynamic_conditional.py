@@ -121,12 +121,14 @@ class TransformerDynamics_2(nn.Module):
 
         ################## MG: pass egnn to get invariant coordinates ###################
         ##Multichannel
-        output, vel_inverse, pose = self.egnn._forward(h_egnn, x_input, edges, node_mask, edge_mask, context=None, bs=bs, n_nodes=n_nodes, dims=dims)
+        output, vel_inverse, pose, global_frame = self.egnn._forward(h_egnn, x_input, edges, node_mask, edge_mask, context=None, bs=bs, n_nodes=n_nodes, dims=dims)
         x_invariant = output[..., :self.n_dims]
         # print(f"x_invariant: {x_invariant[0]}")
         # x_invariant = x_invariant.view(bs*n_nodes, -1)
         x_invariant = x_invariant.view(bs, n_nodes, -1)
         x_invariant = remove_mean_with_mask(x_invariant, node_mask.view(bs, n_nodes, 1))
+        if torch.any(torch.isnan(output)) or torch.any(torch.isnan(pose)) or torch.any(torch.isnan(global_frame)):
+            print('Warning: detected nan in egnn output.')
         #################################################################################
         
         ######edge bias#####
@@ -138,13 +140,25 @@ class TransformerDynamics_2(nn.Module):
         radial, coord_diff = coord2diff(x_input, edges)
         coord_diff = coord_diff.view(bs, n_nodes, n_nodes, 3)
         radial = radial.view(bs, n_nodes, n_nodes, 1)
-        pose_edge = pose.view(bs, n_nodes, 3, 3)
+        # pose_edge = pose.view(bs, n_nodes, 3, 3)
         coord_diff_reshaped = coord_diff.unsqueeze(-2)
         #local frame
         # transformed_coord = torch.einsum('bijpk,bikm->bijpm', coord_diff_reshaped, pose_edge.permute(0, 1, 3, 2)).squeeze(-2)
         #global frame
-        pose_avg = pose_edge.mean(dim=1)
-        transformed_coord = torch.einsum('bijpk,bkm->bijpm', coord_diff_reshaped, pose_avg.permute(0, 2, 1)).squeeze(-2)
+        ## wrong
+        # pose_avg = pose_edge.mean(dim=1)
+        # transformed_coord = torch.einsum('bijpk,bkm->bijpm', coord_diff_reshaped, pose_avg.permute(0, 2, 1)).squeeze(-2)
+        transformed_coord = torch.einsum('bijpk,bkm->bijpm', coord_diff_reshaped, global_frame.permute(0, 2, 1)).squeeze(-2)
+
+
+        # pose_diff = pose - global_frame.unsqueeze(dim=1)
+        pose_reshaped = pose.view(bs, n_nodes, 3, 3)
+        pose_diff = compute_local_global_distances(pose_reshaped, global_frame)
+        # print(f"pose_diff: {pose_diff.shape}")
+        # [bs, n_nodes]
+        frame_loss = (pose_diff ** 2).mean(dim=-1)
+        # frame_loss = 0
+        print(f"frame_loss in SO(3): {frame_loss}")
 
         #add h into edge features
         h_embedded = self.feature_embedding(h)
@@ -174,6 +188,11 @@ class TransformerDynamics_2(nn.Module):
 
         ######DiT##########
         # print(f"xh: {xh}")
+        if torch.any(torch.isnan(xh)):
+            print('Warning: detected nan in xh.')
+        if torch.any(torch.isnan(edge_features)):
+            print('Warning: detected nan in edge_features.') 
+            
         xh = node_mask * self.model(t.squeeze(-1), xh, edge_features, node_mask=node_mask, batch_size=bs, n_nodes=n_nodes)
         # print(f"xh: {xh}")
         x_final = xh[:, :, :self.n_dims] 
@@ -189,6 +208,7 @@ class TransformerDynamics_2(nn.Module):
         x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)  # 恢复bs维度
         x_final_equivariant = remove_mean_with_mask(x_final_equivariant, node_mask)
         vel = (x_final_equivariant)
+        # vel = x_final.view(bs, n_nodes, -1)
         #########################################################
 
 
@@ -209,7 +229,7 @@ class TransformerDynamics_2(nn.Module):
         # start_5 = time.time()
         # print(f'One forward took {start_5 - start_1:.2f} seconds')
         h_final = h_final.view(bs, n_nodes, -1)
-        return torch.cat([vel, h_final], dim=2)
+        return torch.cat([vel, h_final], dim=2), frame_loss
 
     def get_adj_matrix(self, n_nodes, batch_size, device):
         if n_nodes in self._edges_dict:
@@ -239,3 +259,35 @@ def coord2diff(x, edge_index, norm_constant=1):
     norm = torch.sqrt(radial + 1e-8)
     coord_diff = coord_diff/(norm + norm_constant)
     return radial, coord_diff
+
+def compute_local_global_distances(local_frames, global_frames):
+
+    bs, n_nodes = local_frames.shape[:2]
+    
+    global_frames_expanded = global_frames.unsqueeze(1).expand(bs, n_nodes, 3, 3)
+    
+    # (bs, n_nodes, 3, 3) @ (bs, n_nodes, 3, 3)
+    local_frames_t = local_frames.transpose(-2, -1)
+    relative_rotations = torch.bmm(
+        local_frames_t.reshape(-1, 3, 3),
+        global_frames_expanded.reshape(-1, 3, 3)
+    ).reshape(bs, n_nodes, 3, 3)
+
+    S = relative_rotations - relative_rotations.transpose(-2, -1)
+    v = torch.stack([S[...,2,1], S[...,0,2], S[...,1,0]], dim=-1)  # 2*sinθ * 轴
+    sin_term = 0.5 * torch.linalg.norm(v, dim=-1)
+    cos_term = (torch.diagonal(relative_rotations, dim1=-2, dim2=-1).sum(-1) - 1) / 2
+    eps = 1e-8
+    theta = torch.atan2(torch.clamp(sin_term, min=eps),
+                        torch.clamp(cos_term, min=-1+eps, max=1-eps))
+
+    # print(f"theta shape: {theta.shape}")
+    return theta / torch.pi  # (...,)
+    # traces = torch.diagonal(relative_rotations, dim1=-2, dim2=-1).sum(dim=-1)  # (bs, n_nodes)
+    
+    # cos_theta = torch.clamp((traces - 1) / 2, -1, 1)
+    # print(f"cos_theta: {cos_theta}")
+    # distances = torch.acos(cos_theta)
+    # normalized_distances = distances / torch.pi
+    # return normalized_distances
+    # return distances

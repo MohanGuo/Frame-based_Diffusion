@@ -68,7 +68,9 @@ def test_equivariance_with_seed(seed):
             check_mask_correct([x, one_hot, charges], node_mask)
             assert_mean_zero_with_mask(x, node_mask)
             
-            
+            print(f"Shape of x in test rotation: {x.shape}")
+            print(f"Shape of node_mask in test rotation: {node_mask.shape}")
+
             visualize_molecule(x, node_mask, batch_index=0, save_path='molecule_train.png')
             x_rot = random_rotation(x)
             visualize_molecule(x_rot, node_mask, batch_index=0, save_path='molecule_train_rotated.png')

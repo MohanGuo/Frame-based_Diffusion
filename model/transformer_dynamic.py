@@ -230,13 +230,11 @@ class TransformerDynamics_2(nn.Module):
         #add h into edge features
         h_embedded = self.feature_embedding(h)
         rows, cols = edges
-        h_i = h_embedded[rows]  # 源节点特征
-        h_j = h_embedded[cols]  # 目标节点特征
+        h_i = h_embedded[rows]
+        h_j = h_embedded[cols]
 
-        # 拼接特征
-        node_edge_features = torch.cat([h_i, h_j], dim=1)  # 假设拼接维度是1
+        node_edge_features = torch.cat([h_i, h_j], dim=1)
 
-        # 调整形状与radial和transformed_coord匹配
         node_features_matrix = node_edge_features.view(bs, n_nodes, n_nodes, -1)
 
         #Normalize radial:
