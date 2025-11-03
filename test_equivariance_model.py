@@ -176,7 +176,7 @@ def test_equivariance_with_seed(seed):
             results['rotation_invariance_error'] = relative_error.item()
             
             # 2. Non-space rotational errors
-            if out1.shape[2] > 3:  # 确保有非空间特征
+            if out1.shape[2] > 3:
                 absolute_diff_h = out1[..., 3:-1] - out2[..., 3:-1]
                 norm_out1_h = torch.norm(out1[..., 3:-1], dim=2, keepdim=True).clamp(min=1e-8)
                 relative_error_h = torch.mean((torch.norm(absolute_diff_h, dim=2) / norm_out1_h.squeeze(-1) * 1)**2)

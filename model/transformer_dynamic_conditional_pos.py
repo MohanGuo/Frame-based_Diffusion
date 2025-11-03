@@ -169,7 +169,7 @@ class TransformerDynamics_2(nn.Module):
             radial, coord_diff = coord2diff(x_invariant_edge, edges)
             coord_diff = coord_diff.view(bs, n_nodes, n_nodes, 3)
             radial = radial.view(bs, n_nodes, n_nodes, 1)
-            h_embedded = dit_layer.feature_embedding(current_h.view(bs * n_nodes, -1))  # 使用当前模块的 feature_embedding
+            h_embedded = dit_layer.feature_embedding(current_h.view(bs * n_nodes, -1))
             rows, cols = edges
             h_i = h_embedded[rows]
             h_j = h_embedded[cols]
@@ -215,7 +215,7 @@ class TransformerDynamics_2(nn.Module):
         ################# if transform back #####################
         x_final_equivariant = torch.bmm(x_final.unsqueeze(1), pose).squeeze(1)
         # vel = (x_final_equivariant) * node_mask
-        x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1)  # 恢复bs维度
+        x_final_equivariant = x_final_equivariant.view(bs, n_nodes, -1) 
         x_final_equivariant = remove_mean_with_mask(x_final_equivariant, node_mask)
         vel = (x_final_equivariant)
         #########################################################

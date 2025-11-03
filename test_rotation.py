@@ -25,12 +25,10 @@ def random_rotation(x):
     angle_range = np.pi * 2
 
     if n_dims == 3:
-        # 使用轴角法避免万向节锁
         axis = torch.randn(bs, 3, device=device)
-        axis = axis / (torch.norm(axis, dim=1, keepdim=True) + 1e-8)  # 单位化
+        axis = axis / (torch.norm(axis, dim=1, keepdim=True) + 1e-8)
         angles = torch.rand(bs, 1, device=device) * angle_range - np.pi
         
-        # Rodrigues公式生成旋转矩阵
         K = torch.zeros(bs, 3, 3, device=device)
         K[:, 0, 1] = -axis[:, 2]
         K[:, 0, 2] = axis[:, 1]

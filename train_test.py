@@ -63,20 +63,17 @@ def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dt
         # x_invariant =remove_mean_with_mask(x_invariant, node_mask)
 
         ############# gradient check #####################
-        # # 创建一个梯度监控字典
         # gradients = {}
 
-        # # 为每个参数注册梯度钩子
         # def hook_fn(name):
         #     def hook(grad):
         #         gradients[name] = grad.clone()
-        #         # 检查梯度是否包含NaN
+        #         # NaN
         #         if torch.isnan(grad).any():
         #             print(f"NaN gradient detected in {name}")
         #         return grad
         #     return hook
 
-        # # 注册钩子到模型参数
         # hooks = []
         # for name, param in model.named_parameters():
         #     if param.requires_grad:

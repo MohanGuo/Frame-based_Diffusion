@@ -30,19 +30,16 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, attn_mask=None, attn_bias=None):  # 新增attn_bias参数
+    def forward(self, x, attn_mask=None, attn_bias=None):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         
         # if self.use_fused_attn:
-        #     # 严格区分两种类型：
-        #     # attn_mask: bool类型（True表示保留）
-        #     # attn_bias: float类型（加法偏置）
         #     x = F.scaled_dot_product_attention(
         #         q, k, v,
-        #         attn_mask=attn_mask,  # bool类型，完全屏蔽
-        #         attn_bias=attn_bias,  # float类型，加法偏置
+        #         attn_mask=attn_mask,  # bool
+        #         attn_bias=attn_bias,  # float
         #         dropout_p=self.attn_drop.p if self.training else 0.
         #     )
         # else:
@@ -51,10 +48,10 @@ class Attention(nn.Module):
         # print(f"attn_bias: {attn_bias}")
         # print(f"attn_mask: {attn_mask.shape}")
         if attn_bias is not None:
-            attn += attn_bias  # 添加可学习的边偏置
+            attn += attn_bias
         if attn_mask is not None:
             bool_mask = attn_mask > 0
-            attn = attn.masked_fill(~bool_mask, -1e6)  # 完全屏蔽
+            attn = attn.masked_fill(~bool_mask, -1e6)
             # print(f"attn: {attn}")
         attn = attn.softmax(dim=-1)
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
