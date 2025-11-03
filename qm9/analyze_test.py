@@ -4,7 +4,7 @@ try:
     use_rdkit = True
 except ModuleNotFoundError:
     use_rdkit = False
-use_rdkit = False
+# use_rdkit = False
 print(f"use_rdkit: {use_rdkit}")
 import qm9.dataset as dataset
 import torch

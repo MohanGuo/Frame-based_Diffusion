@@ -2,6 +2,48 @@ import torch
 import torch.nn as nn
 import math
 
+class TimestepEmbedder(nn.Module):
+    """
+    Embeds scalar timesteps into vector representations.
+    """
+    def __init__(self, hidden_size, frequency_embedding_size=256):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(frequency_embedding_size, hidden_size, bias=True),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size, bias=True),
+        )
+        self.frequency_embedding_size = frequency_embedding_size
+
+    @staticmethod
+    def timestep_embedding(t, dim, max_period=10000):
+        """
+        Create sinusoidal timestep embeddings.
+        :param t: a 1-D Tensor of N indices, one per batch element.
+                          These may be fractional.
+        :param dim: the dimension of the output.
+        :param max_period: controls the minimum frequency of the embeddings.
+        :return: an (N, D) Tensor of positional embeddings.
+        """
+        # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
+        half = dim // 2
+        freqs = torch.exp(
+            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+        ).to(device=t.device)
+        args = t[:, None].float() * freqs[None]
+        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        if dim % 2:
+            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+        return embedding
+
+    def forward(self, t):
+        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        t_emb = self.mlp(t_freq)
+        return t_emb
+
+def modulate(x, shift, scale):
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
 class Transformer(nn.Module):
     def __init__(self, args, in_node_nf, device, d_model, num_heads, num_layers, d_ff, dropout, edge_dim):
         super(Transformer, self).__init__()
@@ -15,6 +57,11 @@ class Transformer(nn.Module):
         # Embedding layers for h and x
         self.h_embedding = nn.Linear(in_node_nf, d_model)
         self.x_embedding = nn.Linear(3, d_model)
+
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 6 * hidden_size, bias=True)
+        )
 
         # Standard TransformerEncoderLayer
         self.encoder_layers = nn.ModuleList([
@@ -89,10 +136,12 @@ class Transformer(nn.Module):
         
         return edge_bias
 
-    def forward(self, h, x, edge_features, node_mask=None, edge_mask=None, batch_size=0, debug=False):
+    def forward(self, t, h, x, edge_features, node_mask=None, edge_mask=None, batch_size=0, debug=False):
         bs_n_nodes = x.size(0)
         n_nodes = bs_n_nodes // batch_size
 
+        t_embedded = self.t_embedding(t)
+        
         # Embed h and x
         h_embedded = self.dropout(self.h_embedding(h))
         x_embedded = self.dropout(self.x_embedding(x))
@@ -131,25 +180,9 @@ class Transformer(nn.Module):
         
         # Pass through TransformerEncoderLayer
         enc_output = xh_embedded
-        if debug:
-            for i, layer in enumerate(self.encoder_layers):
-                # 直接调用self_attn来获取注意力分数
-                temp_attn_output, attn_weights = layer.self_attn(
-                    enc_output, enc_output, enc_output,
-                    attn_mask=attn_mask,
-                    need_weights=True
-                )
-                
-                # 打印注意力权重的统计信息
-                print(f"Layer {i} attention weights shape: {attn_weights.shape}")
-                print(f"Layer {i} attention weights min/max/mean: {attn_weights.min().item():.4f}/{attn_weights.max().item():.4f}/{attn_weights.mean().item():.4f}")
-                
-                # 继续正常的forward流程
-                enc_output = layer(enc_output, src_mask=attn_mask)
-        else:
-            # 正常流程，不需要观察注意力分数
-            for layer in self.encoder_layers:
-                enc_output = layer(enc_output, src_mask=attn_mask)
+
+        for layer in self.encoder_layers:
+            enc_output = layer(enc_output, src_mask=attn_mask)
 
         # Reshape back to (bs * n_nodes, d_model * 2)
         enc_output = enc_output.transpose(0, 1).contiguous().view(bs_n_nodes, self.d_model * 2)

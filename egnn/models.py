@@ -66,14 +66,14 @@ class EGNN_dynamics_QM9_MC(nn.Module):
         vel_reshaped = vel.view(bs, n_nodes, 2, -1)  # [bs, n_nodes, channel, 3]
         # print(f"vel_reshaped: {vel_reshaped.shape}")
 
-        # 创建每个分子的掩码
+        # mask for every molecule
         mask_expanded = node_mask.view(bs, n_nodes, 1, 1).expand(-1, -1, vel_reshaped.shape[2], 3)
 
-        # 对每个分子单独计算平均速度
-        vel_sum = (vel_reshaped * mask_expanded).sum(dim=1)  # [bs, channel, 3] - 在每个分子内对节点求和
+        # average vel
+        vel_sum = (vel_reshaped * mask_expanded).sum(dim=1)  # [bs, channel, 3]
         # vel_sum = (vel_reshaped).sum(dim=1)
-        node_count = mask_expanded[:, :, 0, 0].sum(dim=1, keepdim=True)  # [bs, 1] - 每个分子的有效节点数
-        vel_mean = vel_sum / (node_count.view(bs, 1, 1) + EPS)  # [bs, channel, 3] - 每个分子的平均速度
+        node_count = mask_expanded[:, :, 0, 0].sum(dim=1, keepdim=True)  # [bs, 1]
+        vel_mean = vel_sum / (node_count.view(bs, 1, 1) + EPS)  # [bs, channel, 3]
 
         # print(f"vel_mean: {vel_mean.shape}")
         

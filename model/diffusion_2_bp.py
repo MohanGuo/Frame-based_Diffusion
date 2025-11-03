@@ -2,7 +2,7 @@ from equivariant_diffusion import utils
 import numpy as np
 import math
 import torch
-from model.transformer_dynamic import TransformerDynamics_2
+from model.transformer_dynamic_conditional import TransformerDynamics_2
 from torch.nn import functional as F
 from equivariant_diffusion import utils as diffusion_utils
 from equivariant_diffusion.utils import assert_mean_zero_with_mask, remove_mean_with_mask,\
@@ -473,7 +473,9 @@ class EnVariationalDiffusion_2(torch.nn.Module):
         sigma_x = self.SNR(-0.5 * gamma_0).unsqueeze(1)
 
         # Neural net prediction.
-        net_out = self.phi(z0, zeros, node_mask, edge_mask, context)
+        # net_out = self.phi(z0, zeros, node_mask, edge_mask, context)
+
+        net_out = self.dynamics.sample_forward(t=zeros, xh=z0, node_mask=node_mask, edge_mask=edge_mask, context=context)
 
         # net_out = self.phi(z0, zeros, node_mask, edge_mask, context)
 

@@ -13,7 +13,6 @@ from equivariant_diffusion.utils import assert_mean_zero_with_mask, remove_mean_
 import torch
 import time
 import pickle
-import numpy as np
 from configs.datasets_config import get_dataset_info
 from os.path import join
 from qm9.sampling import sample
@@ -40,7 +39,6 @@ def analyze_and_save(args, eval_args, device, generative_model,
     assert n_samples % batch_size == 0
     molecules = {'one_hot': [], 'x': [], 'node_mask': []}
     start_time = time.time()
-    batch_times = []
     for i in range(int(n_samples/batch_size)):
         print(f"Start sampling!")
         nodesxsample = nodes_dist.sample(batch_size)
@@ -52,20 +50,9 @@ def analyze_and_save(args, eval_args, device, generative_model,
         molecules['node_mask'].append(node_mask.detach().cpu())
 
         current_num_samples = (i+1) * batch_size
-        # secs_per_sample = (time.time() - start_time) / current_num_samples
-        # print('\t %d/%d Molecules generated at %.5f secs/sample' % (
-        #     current_num_samples, n_samples, secs_per_sample))
-
-        batch_time_per_sample = (time.time() - start_time) / current_num_samples
-        batch_times.append(batch_time_per_sample)
-
         secs_per_sample = (time.time() - start_time) / current_num_samples
-        current_mean = np.mean(batch_times)
-        current_std = np.std(batch_times) if len(batch_times) > 1 else 0.0
-        print('\t %d/%d Molecules generated at %.5f secs/sample (mean: %.5f±%.5f)' % (
-            current_num_samples, n_samples, secs_per_sample, current_mean, current_std))
-
-
+        print('\t %d/%d Molecules generated at %.5f secs/sample' % (
+            current_num_samples, n_samples, secs_per_sample))
 
         if save_to_xyz:
             id_from = i * batch_size
@@ -73,10 +60,6 @@ def analyze_and_save(args, eval_args, device, generative_model,
                 join(eval_args.model_path, 'eval/analyzed_molecules/'),
                 one_hot, charges, x, dataset_info, id_from, name='molecule',
                 node_mask=node_mask)
-    
-    final_mean = np.mean(batch_times)
-    final_std = np.std(batch_times)
-    print(f"\nFinal sampling time: {final_mean:.5f} ± {final_std:.5f} seconds per molecule")
 
     molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
     stability_dict, rdkit_metrics = analyze_stability_for_molecules(
@@ -252,7 +235,6 @@ def main():
     # #############################################################
 
     # Analyze stability, validity, uniqueness and novelty
-    generative_model.eval()
     stability_dict, rdkit_metrics = analyze_and_save(
         args, eval_args, device, generative_model, nodes_dist,
         prop_dist, dataset_info, n_samples=eval_args.n_samples,

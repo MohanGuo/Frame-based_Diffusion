@@ -1,7 +1,9 @@
 import torch
 # from egnn.models_new import EGNN_dynamics_QM9
 from egnn.models import EGNN_dynamics_QM9_MC
-from model.transformer_dynamic import TransformerDynamics_2
+# from model.transformer_dynamic_dit import TransformerDynamics_2
+# from model.transformer_dynamic_conditional import TransformerDynamics_2
+from model.transformer_dynamic_conditional import TransformerDynamics_2
 from equivariant_diffusion.utils import assert_mean_zero_with_mask, remove_mean_with_mask,\
     assert_correctly_masked, sample_center_gravity_zero_gaussian_with_mask
 import sys
@@ -28,25 +30,22 @@ def random_rotation_matrices(batch_size, device):
     rotation_matrices = []
     
     for _ in range(batch_size):
-        # 为每个样本生成随机旋转向量
+        # Generate rotation matrix
         theta = torch.randn(3, device=device)
-        theta = theta / torch.norm(theta)  # 归一化
+        theta = theta / torch.norm(theta)  # Normalization
         
-        # 创建反对称矩阵 K
         K = torch.zeros((3, 3), device=device)
         K[0, 1], K[0, 2] = -theta[2], theta[1]
         K[1, 0], K[1, 2] = theta[2], -theta[0]
         K[2, 0], K[2, 1] = -theta[1], theta[0]
         
-        # 计算旋转矩阵 R = exp(K)
         R = torch.matrix_exp(K)
         rotation_matrices.append(R)
     
-    return torch.stack(rotation_matrices)  # 返回形状为 [batch_size, 3, 3] 的张量
+    return torch.stack(rotation_matrices)  # [batch_size, 3, 3]
 
 def test_equivariance_with_seed(seed):
-    """运行单次等变性测试并返回指定的误差指标"""
-    # 设置随机种子
+    """Run one seed"""
     torch.random.manual_seed(seed)
 
     # Model setup
@@ -83,27 +82,16 @@ def test_equivariance_with_seed(seed):
                 num_vectors=7, num_vectors_out=2
                  )
     
-    if debug:
-        model = TransformerDynamics_2(
-            args=cfg,
-            egnn=egnn,
-            in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
-            n_dims=3, device=device, hidden_nf=nf,
-            n_heads=8,
-            n_layers=n_layers,
-            condition_time=True,
-            debug=debug
-            )
-    else:
-        model = TransformerDynamics_2(
-            args=cfg,
-            egnn=egnn,
-            in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
-            n_dims=3, device=device, hidden_nf=nf,
-            n_heads=8,
-            n_layers=n_layers,
-            condition_time=True
-            )
+
+    model = TransformerDynamics_2(
+        args=cfg,
+        egnn=egnn,
+        in_node_nf=dynamics_in_node_nf, context_node_nf=context_node_nf,
+        n_dims=3, device=device, hidden_nf=nf,
+        n_heads=8,
+        n_layers=n_layers,
+        condition_time=True
+        )
     
     results = {
         'rotation_invariance_error': 0.0,
@@ -151,8 +139,8 @@ def test_equivariance_with_seed(seed):
             # rotation_matrices = rotation_matrix.unsqueeze(0).repeat(batch_size, 1, 1)
     
             xh_rot = xh.clone()
-            # xh[..., :3] 形状为 [batch_size, num_nodes, 3]
-            # 展开为 [batch_size, num_nodes, 3] @ [batch_size, 3, 3]
+            # xh[..., :3] shape: [batch_size, num_nodes, 3]
+            # [batch_size, num_nodes, 3] @ [batch_size, 3, 3]
             xh_rot[..., :3] = torch.bmm(xh[..., :3], rotation_matrices.transpose(1, 2))
 
             visualize_molecule(xh_rot[..., :3], node_mask, batch_index=0, save_path='molecule_2_input.png')
@@ -187,7 +175,7 @@ def test_equivariance_with_seed(seed):
             relative_error = torch.mean((torch.norm(absolute_diff, dim=2) / norm_out1.squeeze(-1) )**2)
             results['rotation_invariance_error'] = relative_error.item()
             
-            # 2. 非空间特征旋转不变性
+            # 2. Non-space rotational errors
             if out1.shape[2] > 3:  # 确保有非空间特征
                 absolute_diff_h = out1[..., 3:-1] - out2[..., 3:-1]
                 norm_out1_h = torch.norm(out1[..., 3:-1], dim=2, keepdim=True).clamp(min=1e-8)
@@ -196,7 +184,7 @@ def test_equivariance_with_seed(seed):
             else:
                 results['rotation_invariance_error_h'] = 0.0
             
-            # 3. 旋转等变性
+            # 3. Rotations equivariance error
             # out1_rot = torch.bmm(out1[..., :3], rotation_matrices)
             absolute_diff_equiv = out1_rot - out2[..., :3]
             norm_out1_rot = torch.norm(out1_rot, dim=2, keepdim=True).clamp(min=1e-8)
@@ -297,32 +285,26 @@ def check_mask_correct(variables, node_mask):
             assert_correctly_masked(variable, node_mask)
 
 def test_equivariance_multi_seeds(num_tests=10):
-    """运行多个随机种子的测试并统计结果"""
-    # 使用当前时间生成一个主随机种子
+    """Run multiple seeds"""
     import random
     import time
     random.seed(int(time.time()))
     
-    # 随机生成多个测试种子
     seeds = [random.randint(1, 100000) for _ in range(num_tests)]
     num_seeds = len(seeds)
-    seeds = [28461]
-    
-    # 记录所有结果
+    # seeds = [28461]
+
     all_results = []
     
-    # 运行多次测试
     for i, seed in enumerate(seeds):
         print(f"\n[{i+1}/{num_seeds}] Testing with random seed: {seed}")
         results = test_equivariance_with_seed(seed)
         all_results.append(results)
         
-        # 显示当前结果
         print(f"  Rotation invariance error: {results['rotation_invariance_error']:.8f}")
         print(f"  Rotation invariance error on h: {results['rotation_invariance_error_h']:.8f}")
         print(f"  Rotation equivariance error: {results['rotation_equivariance_error']:.8f}")
     
-    # 计算统计结果
     stats = {metric: {} for metric in all_results[0].keys()}
     
     for metric in stats.keys():
@@ -332,7 +314,6 @@ def test_equivariance_multi_seeds(num_tests=10):
         stats[metric]['max'] = max(values)
         stats[metric]['std'] = (sum((x - stats[metric]['mean'])**2 for x in values) / len(values))**0.5
     
-    # 显示统计结果
     print("\n" + "="*60)
     print(f"RESULTS OVER {num_seeds} RANDOM SEEDS")
     print("="*60)
@@ -353,7 +334,7 @@ def test_equivariance_multi_seeds(num_tests=10):
     return stats, all_results
 
 if __name__ == "__main__":
-    # 您可以在这里指定要运行的测试次数
+    # Specify number of tests to run
     num_tests = 10
     stats, results = test_equivariance_multi_seeds(num_tests)
     

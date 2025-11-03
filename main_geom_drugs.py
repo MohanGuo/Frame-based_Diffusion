@@ -10,9 +10,11 @@ import utils
 import argparse
 import wandb
 from os.path import join
-from qm9.models import get_optim, get_model
-from equivariant_diffusion import en_diffusion
-
+# from qm9.models import get_optim,  get_diffusion
+from models import get_optim, get_diffusion, get_egnn
+# from equivariant_diffusion import en_diffusion
+from model.diffusion_2 import EnVariationalDiffusion_2
+from equivariant_diffusion.utils import assert_correctly_masked
 from equivariant_diffusion import utils as diffusion_utils
 import torch
 import time
@@ -23,6 +25,24 @@ import train_test
 
 
 parser = argparse.ArgumentParser(description='e3_diffusion')
+
+#New Params
+parser.add_argument('--use_pretrain', action='store_true', help='Use pretrained egnn')
+parser.add_argument('--pretrained_model_path', type=str, help='Use pretrained egnn')
+parser.add_argument('--fix_egnn', action='store_true', help='Use pretrained egnn')
+parser.add_argument('--inte_model', type=str, help='Internal Model')
+# -------- sym_diff args -------- #
+parser.add_argument("--xh_hidden_size", type=int, default=128, help="config for DDG")
+parser.add_argument("--K", type=int, default=184, help="config for DDG")
+parser.add_argument("--hidden_size", type=int, default=384, help="config for DDG")
+parser.add_argument("--depth", type=int, default=12, help="config for DDG")
+parser.add_argument("--num_heads", type=int, default=6, help="config for DDG")
+parser.add_argument("--mlp_ratio", type=float, default=4.0, help="config for DDG")
+parser.add_argument("--mlp_dropout", type=float, default=0.0, help="config for DDG")
+parser.add_argument('--n_heads', type=int, default=8,
+                    help="number of attention heads")
+
+
 parser.add_argument('--exp_name', type=str, default='debug_10')
 parser.add_argument('--model', type=str, default='egnn_dynamics',
                     help='our_dynamics | schnet | simple_dynamics | '
@@ -115,7 +135,9 @@ parser.add_argument('--sequential', action='store_true',
                     help='Organize data by size to reduce average memory usage.')
 args = parser.parse_args()
 
-data_file = './data/geom/geom_drugs_30.npy'
+# data_file = './data/geom/geom_drugs_30.npy'
+data_file = '/projects/prjs1459/Thesis/global_framework_pretrain_egnn/data/geom/geom_drugs_30.npy'
+print(f"data_file: {data_file}")
 
 if args.remove_h:
     raise NotImplementedError()
@@ -189,7 +211,9 @@ args.context_node_nf = context_node_nf
 
 
 # Create EGNN flow
-model, nodes_dist, prop_dist = get_model(args, device, dataset_info, dataloader_train=dataloaders['train'])
+# model, nodes_dist, prop_dist = get_model(args, device, dataset_info, dataloader_train=dataloaders['train'])
+model, nodes_dist, prop_dist = get_diffusion(args, device, dataset_info, dataloaders['train'])
+
 model = model.to(device)
 optim = get_optim(args, model)
 # print(model)
@@ -233,22 +257,37 @@ def main():
     best_nll_test = 1e8
     for epoch in range(args.start_epoch, args.n_epochs):
         start_epoch = time.time()
-        train_test.train_epoch(args, dataloaders['train'], epoch, model, model_dp, model_ema, ema, device, dtype,
-                               property_norms, optim, nodes_dist, gradnorm_queue, dataset_info,
-                               prop_dist)
+        # train_test.train_epoch(args, dataloaders['train'], epoch, model, model_dp, model_ema, ema, device, dtype,
+        #                        property_norms, optim, nodes_dist, gradnorm_queue, dataset_info,
+        #                        prop_dist)
+        train_test.train_epoch(args=args, loader=dataloaders['train'], epoch=epoch, model=model, model_dp=model_dp,
+                    model_ema=model_ema, ema=ema, device=device, dtype=dtype, property_norms=property_norms,
+                    nodes_dist=nodes_dist, dataset_info=dataset_info,
+                    gradnorm_queue=gradnorm_queue, optim=optim, optim_egnn=None, prop_dist=prop_dist, egnn=None)
         print(f"Epoch took {time.time() - start_epoch:.1f} seconds.")
 
         if epoch % args.test_epochs == 0:
-            if isinstance(model, en_diffusion.EnVariationalDiffusion):
+            if isinstance(model, EnVariationalDiffusion_2):
                 wandb.log(model.log_info(), commit=True)
 
             if not args.break_train_epoch:
-                train_test.analyze_and_save(epoch, model_ema, nodes_dist, args, device,
-                                            dataset_info, prop_dist, n_samples=args.n_stability_samples)
-            nll_val = train_test.test(args, dataloaders['val'], epoch, model_ema_dp, device, dtype,
-                                      property_norms, nodes_dist, partition='Val')
-            nll_test = train_test.test(args, dataloaders['test'], epoch, model_ema_dp, device, dtype,
-                                       property_norms, nodes_dist, partition='Test')
+                # train_test.analyze_and_save(epoch, model_ema, nodes_dist, args, device,
+                #                             dataset_info, prop_dist, n_samples=args.n_stability_samples)
+                train_test.analyze_and_save(args=args, epoch=epoch, model_sample=model_ema, nodes_dist=nodes_dist,
+                                 dataset_info=dataset_info, device=device,
+                                 prop_dist=prop_dist, n_samples=args.n_stability_samples)
+
+            # nll_val = train_test.test(args, dataloaders['val'], epoch, model_ema_dp, device, dtype,
+            #                           property_norms, nodes_dist, partition='Val')
+            # nll_test = train_test.test(args, dataloaders['test'], epoch, model_ema_dp, device, dtype,
+                                    #    property_norms, nodes_dist, partition='Test')
+            nll_val = train_test.test(args=args, loader=dataloaders['val'], epoch=epoch, eval_model=model_ema_dp,
+                           partition='Val', device=device, dtype=dtype, nodes_dist=nodes_dist,
+                           property_norms=property_norms, egnn=None)
+            nll_test = train_test.test(args=args, loader=dataloaders['test'], epoch=epoch, eval_model=model_ema_dp,
+                            partition='Test', device=device, dtype=dtype,
+                            nodes_dist=nodes_dist, property_norms=property_norms, egnn=None)
+
 
             if nll_val < best_nll_val:
                 best_nll_val = nll_val

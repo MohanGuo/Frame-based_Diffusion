@@ -1,6 +1,6 @@
 import torch
 # from egnn.models_new import EGNN_dynamics_QM9
-from model.transformer_dynamic import TransformerDynamics_2
+# from model.transformer_dynamic import TransformerDynamics_2
 # from model.transformer_dynamic_baseline_transformer import TransformerDynamics_2
 from equivariant_diffusion.utils import assert_mean_zero_with_mask, remove_mean_with_mask,\
     assert_correctly_masked, sample_center_gravity_zero_gaussian_with_mask
@@ -63,7 +63,6 @@ def random_rotation(x):
     return x.contiguous()
 
 def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
-    """增强版分子可视化"""
     coords = x[batch_index].detach().cpu().numpy()
     mask = node_mask[batch_index].squeeze().detach().cpu().numpy()
     valid_mask = mask > 0
@@ -72,18 +71,15 @@ def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
     
-    # 绘制原子（根据Z坐标着色）
     sc = ax.scatter(
         valid_coords[:, 0], valid_coords[:, 1], valid_coords[:, 2],
         c=valid_coords[:, 2], cmap='viridis', s=100, depthshade=True,
         edgecolors='k', linewidth=0.5
     )
     
-    # 添加颜色条
     cbar = fig.colorbar(sc, ax=ax, shrink=0.8)
     cbar.set_label('Z Coordinate', rotation=270, labelpad=15)
     
-    # 设置等比例轴
     max_range = np.array([
         valid_coords[:,0].max()-valid_coords[:,0].min(), 
         valid_coords[:,1].max()-valid_coords[:,1].min(),
@@ -98,10 +94,8 @@ def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
     ax.set_ylim(mid_y - max_range, mid_y + max_range)
     ax.set_zlim(mid_z - max_range, mid_z + max_range)
     
-    # 设置视角
-    ax.view_init(elev=30, azim=45)  # 固定视角
+    ax.view_init(elev=30, azim=45)
     
-    # 添加连接线（示例：显示所有原子间的连接）
     for i in range(len(valid_coords)):
         for j in range(i+1, len(valid_coords)):
             ax.plot(
@@ -117,8 +111,7 @@ def visualize_molecule(x, node_mask, batch_index=0, save_path='molecule.png'):
 
 
 def test_equivariance_with_seed(seed):
-    """运行单次等变性测试并返回指定的误差指标"""
-    # 设置随机种子
+
     torch.random.manual_seed(seed)
 
     # Model setup

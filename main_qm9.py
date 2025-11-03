@@ -29,10 +29,10 @@ from egnn.egnn import EGNN
 parser = argparse.ArgumentParser(description='E3Diffusion')
 
 #New Params
-# parser.add_argument('--train_egnn', action='store_false', help='Train EGNN')
-# parser.add_argument('--train_diffusion', action='store_true', help='Train Diffusion')
 parser.add_argument('--use_pretrain', action='store_true', help='Use pretrained egnn')
 parser.add_argument('--pretrained_model_path', type=str, help='Use pretrained egnn')
+parser.add_argument('--fix_egnn', action='store_true', help='Use pretrained egnn')
+parser.add_argument('--inte_model', type=str, help='Internal Model')
 
 parser.add_argument('--exp_name', type=str, default='debug_10')
 parser.add_argument('--model', type=str, default='egnn_dynamics',
@@ -40,6 +40,19 @@ parser.add_argument('--model', type=str, default='egnn_dynamics',
                          'kernel_dynamics | egnn_dynamics |gnn_dynamics')
 parser.add_argument('--probabilistic_model', type=str, default='diffusion',
                     help='diffusion')
+# parser.add_argument('--clipping_type', type=str, default="queue")  # default from EDM
+# parser.add_argument('--max_grad_norm', type=float, default=1.5)  # NOTE: LEO
+
+# -------- sym_diff args -------- #
+parser.add_argument("--xh_hidden_size", type=int, default=128, help="config for DDG")
+parser.add_argument("--K", type=int, default=184, help="config for DDG")
+
+parser.add_argument("--hidden_size", type=int, default=384, help="config for DDG")
+parser.add_argument("--depth", type=int, default=12, help="config for DDG")
+parser.add_argument("--num_heads", type=int, default=6, help="config for DDG")
+parser.add_argument("--mlp_ratio", type=float, default=4.0, help="config for DDG")
+parser.add_argument("--mlp_dropout", type=float, default=0.0, help="config for DDG")
+
 
 # Training complexity is O(1) (unaffected), but sampling complexity is O(steps).
 parser.add_argument('--diffusion_steps', type=int, default=500)
@@ -153,6 +166,7 @@ dtype = torch.float
 if args.resume is not None:
     exp_name = args.exp_name + '_resume'
     start_epoch = args.start_epoch
+    n_epochs = args.n_epochs
     resume = args.resume
     wandb_usr = args.wandb_usr
     normalization_factor = args.normalization_factor
@@ -167,6 +181,7 @@ if args.resume is not None:
     args.exp_name = exp_name
     args.start_epoch = start_epoch
     args.wandb_usr = wandb_usr
+    args.n_epochs = n_epochs
 
     # Careful with this -->
     if not hasattr(args, 'normalization_factor'):
@@ -241,7 +256,7 @@ def check_mask_correct(variables, node_mask):
 
 def main():
     if args.resume is not None:
-        flow_state_dict = torch.load(join(args.resume, 'flow.npy'))
+        flow_state_dict = torch.load(join(args.resume, 'generative_model_ema.npy'))
         optim_state_dict = torch.load(join(args.resume, 'optim.npy'))
         model.load_state_dict(flow_state_dict)
         optim.load_state_dict(optim_state_dict)

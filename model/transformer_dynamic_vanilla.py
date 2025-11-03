@@ -3,8 +3,8 @@ import torch.nn as nn
 import math
 import numpy as np
 # from .transformer import Transformer
-from .transformer_new import Transformer
-from .mpnn import LEquiMPNNQM9
+from .transformer_vanilla import Transformer
+# from .mpnn import LEquiMPNNQM9
 import sys
 sys.path.append('..')
 from equivariant_diffusion.utils import remove_mean, remove_mean_with_mask, assert_mean_zero_with_mask
@@ -126,15 +126,15 @@ class TransformerDynamics_2(nn.Module):
         #     )
         #     self.transformers.append(transformer)
 
-        self.equi_model = LEquiMPNNQM9(
-                in_node_nf=in_node_nf + context_node_nf,
-                in_edge_nf=1,
-                hidden_nf=hidden_nf,
-                device=device,
-                # act_fn=act_fn,
-                n_layers=n_layers)
-                # attention=attention,
-                # tanh=tanh)
+        # self.equi_model = LEquiMPNNQM9(
+        #         in_node_nf=in_node_nf + context_node_nf,
+        #         in_edge_nf=1,
+        #         hidden_nf=hidden_nf,
+        #         device=device,
+        #         # act_fn=act_fn,
+        #         n_layers=n_layers)
+        #         # attention=attention,
+        #         # tanh=tanh)
         
         # self.debug=debug
 
@@ -214,13 +214,11 @@ class TransformerDynamics_2(nn.Module):
         #add h into edge features
         h_embedded = self.feature_embedding(h)
         rows, cols = edges
-        h_i = h_embedded[rows]  # 源节点特征
-        h_j = h_embedded[cols]  # 目标节点特征
-
-        # 拼接特征
-        node_edge_features = torch.cat([h_i, h_j], dim=1)  # 假设拼接维度是1
-
-        # 调整形状与radial和transformed_coord匹配
+        h_i = h_embedded[rows]
+        h_j = h_embedded[cols]
+ 
+        node_edge_features = torch.cat([h_i, h_j], dim=1)
+ 
         node_features_matrix = node_edge_features.view(bs, n_nodes, n_nodes, -1)
 
         # #Normalize radial:
