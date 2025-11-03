@@ -2,7 +2,8 @@
 
 Official implementation of the paper:  
 
-📄 **[Frame-based Equivariant Diffusion Models for 3D Molecular Generation]([https://arxiv.org/abs/XXXX.XXXXX](https://arxiv.org/abs/2509.19506))** 
+📄 **[Frame-based Equivariant Diffusion Models for 3D Molecular Generation](https://arxiv.org/abs/2509.19506)**
+
 
 *(arXiv preprint, 2025)*
 
